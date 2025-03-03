@@ -1,0 +1,178 @@
+{
+  "name": "vscode-svn",
+  "displayName": "VSCode SVN",
+  "description": "VSCode的SVN操作插件，提供SVN版本控制功能集成",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:vscode-svn.uploadFile",
+    "onCommand:vscode-svn.uploadFolder",
+    "onCommand:vscode-svn.commitFile",
+    "onCommand:vscode-svn.setSvnRoot",
+    "onCommand:vscode-svn.clearSvnRoot",
+    "onCommand:vscode-svn.updateFile",
+    "onCommand:vscode-svn.updateDirectory",
+    "onCommand:vscode-svn.updateWorkspace",
+    "workspaceContains:.svn"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscode-svn.uploadFile",
+        "title": "SVN: 上传文件"
+      },
+      {
+        "command": "vscode-svn.uploadFolder",
+        "title": "SVN: 上传文件夹"
+      },
+      {
+        "command": "vscode-svn.commitFile",
+        "title": "SVN: 提交文件(显示差异)"
+      },
+      {
+        "command": "vscode-svn.setSvnRoot",
+        "title": "SVN: 设置SVN工作副本路径"
+      },
+      {
+        "command": "vscode-svn.clearSvnRoot",
+        "title": "SVN: 清除SVN工作副本路径"
+      },
+      {
+        "command": "vscode-svn.updateFile",
+        "title": "SVN: 更新文件"
+      },
+      {
+        "command": "vscode-svn.updateDirectory",
+        "title": "SVN: 更新目录"
+      },
+      {
+        "command": "vscode-svn.updateWorkspace",
+        "title": "SVN: 更新工作区"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "vscode-svn.uploadFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.uploadFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.commitFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.updateFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.updateDirectory",
+          "when": "explorerResourceIsFolder",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.setSvnRoot",
+          "when": "explorerResourceIsFolder",
+          "group": "svn@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "vscode-svn.commitFile",
+          "when": "resourceScheme == file",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.updateFile",
+          "when": "resourceScheme == file",
+          "group": "svn"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "vscode-svn.setSvnRoot",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.clearSvnRoot",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.updateWorkspace",
+          "group": "svn"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "vscode-svn.updateWorkspace",
+          "when": "view == explorer",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "VSCode SVN",
+      "properties": {
+        "vscode-svn.customSvnRoot": {
+          "type": "string",
+          "default": null,
+          "description": "自定义SVN工作副本根目录路径"
+        },
+        "vscode-svn.aiModel": {
+          "type": "string",
+          "enum": ["openai", "qwen"],
+          "default": "openai",
+          "description": "选择用于生成提交日志的AI模型（OpenAI 或 通义千问）"
+        },
+        "vscode-svn.aiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "用于生成提交日志的OpenAI API密钥"
+        },
+        "vscode-svn.qwenApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "用于生成提交日志的通义千问API密钥"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^16.11.7",
+    "@types/vscode": "^1.60.0",
+    "typescript": "^4.5.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/vscode-svn.git"
+  },
+  "keywords": [
+    "svn",
+    "subversion",
+    "vscode",
+    "scm"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
