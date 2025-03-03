@@ -3,6 +3,8 @@
   "displayName": "VSCode SVN",
   "description": "VSCode的SVN操作插件，提供SVN版本控制功能集成",
   "version": "0.1.0",
+  "publisher": "summer198971",
+  "icon": "resources/icon.png",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -165,14 +167,21 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/vscode-svn.git"
+    "url": "https://github.com/summer198971/vscode-svn.git"
   },
+  "bugs": {
+    "url": "https://github.com/summer198971/vscode-svn/issues"
+  },
+  "homepage": "https://github.com/summer198971/vscode-svn",
   "keywords": [
     "svn",
     "subversion",
     "vscode",
-    "scm"
+    "scm",
+    "版本控制",
+    "差异对比",
+    "AI提交日志"
   ],
-  "author": "Your Name",
+  "author": "summer198971",
   "license": "MIT"
 }
