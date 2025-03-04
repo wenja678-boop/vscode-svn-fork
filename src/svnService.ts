@@ -22,27 +22,28 @@ export class SvnService {
   /**
    * 执行SVN命令
    * @param command SVN命令
-   * @param cwd 工作目录
+   * @param path 工作目录
+   * @param useXml 是否使用XML输出
    * @returns 命令执行结果
    */
-  public async executeSvnCommand(command: string, cwd: string): Promise<string> {
-    this.outputChannel.appendLine(`\n[executeSvnCommand] 执行SVN命令: svn ${command}`);
-    this.outputChannel.appendLine(`[executeSvnCommand] 工作目录: ${cwd}`);
-    
+  public async executeSvnCommand(command: string, path: string, useXml: boolean = false): Promise<string> {
     try {
+      this.outputChannel.appendLine(`\n[executeSvnCommand] 执行SVN命令: svn ${command}`);
+      this.outputChannel.appendLine(`[executeSvnCommand] 工作目录: ${path}`);
+      
       // 设置环境变量以解决编码问题
-      const env = Object.assign({}, process.env, {
+      const env = {
+        ...process.env,
         LANG: 'en_US.UTF-8',
         LC_ALL: 'en_US.UTF-8',
         LANGUAGE: 'en_US.UTF-8',
         SVN_EDITOR: 'vim'
-      });
+      };
       
       this.outputChannel.appendLine(`[executeSvnCommand] 设置环境变量: LANG=en_US.UTF-8, LC_ALL=en_US.UTF-8, LANGUAGE=en_US.UTF-8`);
       
-      // 添加--xml参数以获取标准化的输出格式
-      const useXmlOutput = command.includes('diff') || command.includes('status') || command.includes('info');
-      const xmlFlag = useXmlOutput && !command.includes('--xml') ? '--xml' : '';
+      // 根据 useXml 参数决定是否添加 --xml 标志
+      const xmlFlag = useXml ? '--xml' : '';
       
       if (xmlFlag) {
         this.outputChannel.appendLine(`[executeSvnCommand] 添加XML输出标志: ${xmlFlag}`);
@@ -64,7 +65,7 @@ export class SvnService {
         const svnProcess = cp.exec(
           finalCommand, 
           { 
-            cwd, 
+            cwd: path, 
             env,
             maxBuffer: 10 * 1024 * 1024 // 增加缓冲区大小到10MB
           },

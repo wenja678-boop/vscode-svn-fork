@@ -4,6 +4,7 @@ import { SvnDiffProvider } from './diffProvider';
 import { SvnCommitPanel } from './commitPanel';
 import { SvnUpdatePanel } from './updatePanel';
 import { CommitLogStorage } from './commitLogStorage';
+import { SvnFolderCommitPanel } from './folderCommitPanel';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -77,10 +78,10 @@ async function uploadFolderToSvn(folderPath: string): Promise<void> {
   try {
     // 检查SVN是否已安装
     if (!await svnService.isSvnInstalled()) {
-      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中。');
       return;
     }
-    
+
     // 检查文件夹是否在SVN工作副本中
     if (!await svnService.isInWorkingCopy(folderPath)) {
       const result = await vscode.window.showErrorMessage(
@@ -88,53 +89,41 @@ async function uploadFolderToSvn(folderPath: string): Promise<void> {
         '设置SVN工作副本路径',
         '取消'
       );
-      
+
       if (result === '设置SVN工作副本路径') {
         await setSvnWorkingCopyRoot();
         // 重新检查
         if (!await svnService.isInWorkingCopy(folderPath)) {
-          vscode.window.showErrorMessage('文件夹仍不在SVN工作副本中，请检查设置的路径是否正确');
+          vscode.window.showErrorMessage('文件夹仍不在SVN工作副本中，请检查设置的路径是否正确。');
           return;
         }
       } else {
         return;
       }
     }
-    
-    // 检查是否有未添加到SVN的文件
-    const statusResult = await svnService.executeSvnCommand('status', folderPath);
-    const unversionedFiles = statusResult
-      .split('\n')
-      .filter(line => line.startsWith('?'))
-      .map(line => line.substring(1).trim());
-    
-    if (unversionedFiles.length > 0) {
-      const addUnversioned = await vscode.window.showQuickPick(['是', '否'], {
-        placeHolder: `发现${unversionedFiles.length}个未添加到SVN的文件，是否添加？`
-      });
-      
-      if (addUnversioned === '是') {
-        await svnService.executeSvnCommand('add * --force', folderPath);
-        vscode.window.showInformationMessage('已添加所有未版本控制的文件到SVN');
-      }
-    }
-    
-    // 提交文件夹
-    const commitMessage = await vscode.window.showInputBox({
-      prompt: '请输入提交信息',
-      placeHolder: '描述您所做的更改'
-    });
-    
-    if (commitMessage === undefined) {
-      // 用户取消了操作
-      return;
-    }
-    
-    await svnService.commit(folderPath, commitMessage);
-    vscode.window.showInformationMessage(`文件夹已成功上传到SVN`);
+
+    // 显示文件夹提交面板
+    await SvnFolderCommitPanel.createOrShow(
+      vscode.extensions.getExtension('vscode-svn')?.extensionUri || vscode.Uri.file(__dirname),
+      folderPath,
+      svnService,
+      diffProvider,
+      logStorage
+    );
   } catch (error: any) {
-    vscode.window.showErrorMessage(`SVN上传失败: ${error.message}`);
+    vscode.window.showErrorMessage('上传文件夹到SVN失败: ' + error.message);
   }
+}
+
+// 新UI界面和用户交互的占位函数
+async function showFolderStatusUI(folderPath: string, fileStatuses: string[]): Promise<void> {
+  // 需要实现显示文件夹状态的UI界面
+  return Promise.resolve();
+}
+
+async function getUserCommitChoices(): Promise<{ selectedFiles: string[], commitMessage: string }> {
+  // 需要实现获取用户的文件选择和提交信息的功能
+  return Promise.resolve({ selectedFiles: [], commitMessage: '' });
 }
 
 /**

@@ -7,16 +7,34 @@ import * as https from 'https';
 export class AiService {
   private static readonly OPENAI_API_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
   private static readonly QWEN_API_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
+  // 设置不同模型的最大差异长度限制
+  private static readonly MAX_DIFF_LENGTH = {
+    openai: 12000,  // GPT-3.5 约 4096 tokens，按平均一个token 3个字符计算
+    qwen: 240000    // 通义千问支持更长的文本
+  };
+
+  // 默认的API密钥
+  private static readonly DEFAULT_QWEN_API_KEY = 'sk-57e28e26cdb247bda6ce970af6d06c7b'; // 替换为您的默认API密钥
+  private static readonly DEFAULT_OPENAI_API_KEY = 'sk-yyyyy'; // 替换为您的默认OpenAI API密钥
+
   private aiModel: string;
   private openaiApiKey: string | undefined;
   private qwenApiKey: string | undefined;
+  private outputChannel: vscode.OutputChannel;
 
   constructor() {
     // 从设置中获取配置
     const config = vscode.workspace.getConfiguration('vscode-svn');
-    this.aiModel = config.get<string>('aiModel') || 'openai';
-    this.openaiApiKey = config.get<string>('aiApiKey');
-    this.qwenApiKey = config.get<string>('qwenApiKey');
+    this.aiModel = config.get<string>('aiModel') || 'qwen'; // 默认使用通义千问
+    
+    // 优先使用配置的API密钥，如果没有则使用默认值
+    const configOpenaiKey = config.get<string>('aiApiKey');
+    const configQwenKey = config.get<string>('qwenApiKey');
+    
+    this.openaiApiKey = configOpenaiKey || AiService.DEFAULT_OPENAI_API_KEY;
+    this.qwenApiKey = configQwenKey || AiService.DEFAULT_QWEN_API_KEY;
+    
+    this.outputChannel = vscode.window.createOutputChannel('SVN AI 生成提交日志');
   }
 
   /**
@@ -26,11 +44,13 @@ export class AiService {
    */
   public async generateCommitMessage(diffContent: string): Promise<string> {
     try {
-      // 检查是否配置了API密钥
+      // 检查是否需要配置API密钥
       if (this.aiModel === 'openai' && !this.openaiApiKey) {
         const setApiKey = await vscode.window.showInformationMessage(
-          '请先设置OpenAI API密钥才能使用AI生成提交日志功能',
+          '是否要设置自定义的OpenAI API密钥？（当前使用默认密钥）',
           '设置API密钥',
+          '使用默认密钥',
+          '切换到通义千问',
           '取消'
         );
         
@@ -45,19 +65,26 @@ export class AiService {
             await vscode.workspace.getConfiguration('vscode-svn').update('aiApiKey', apiKey, vscode.ConfigurationTarget.Global);
             this.openaiApiKey = apiKey;
           } else {
-            return '';
+            // 如果用户取消输入，使用默认密钥
+            this.openaiApiKey = AiService.DEFAULT_OPENAI_API_KEY;
           }
+        } else if (setApiKey === '使用默认密钥') {
+          this.openaiApiKey = AiService.DEFAULT_OPENAI_API_KEY;
+        } else if (setApiKey === '切换到通义千问') {
+          await vscode.workspace.getConfiguration('vscode-svn').update('aiModel', 'qwen', vscode.ConfigurationTarget.Global);
+          this.aiModel = 'qwen';
         } else {
           return '';
         }
       } else if (this.aiModel === 'qwen' && !this.qwenApiKey) {
         const setApiKey = await vscode.window.showInformationMessage(
-          '请先设置通义千问API密钥才能使用AI生成提交日志功能',
-          '设置密钥',
+          '是否要设置自定义的通义千问API密钥？（当前使用默认密钥）',
+          '设置API密钥',
+          '使用默认密钥',
           '取消'
         );
-        
-        if (setApiKey === '设置密钥') {
+
+        if (setApiKey === '设置API密钥') {
           const apiKey = await vscode.window.showInputBox({
             prompt: '请输入您的通义千问API密钥',
             password: true,
@@ -68,8 +95,11 @@ export class AiService {
             await vscode.workspace.getConfiguration('vscode-svn').update('qwenApiKey', apiKey, vscode.ConfigurationTarget.Global);
             this.qwenApiKey = apiKey;
           } else {
-            return '';
+            // 如果用户取消输入，使用默认密钥
+            this.qwenApiKey = AiService.DEFAULT_QWEN_API_KEY;
           }
+        } else if (setApiKey === '使用默认密钥') {
+          this.qwenApiKey = AiService.DEFAULT_QWEN_API_KEY;
         } else {
           return '';
         }
@@ -77,6 +107,13 @@ export class AiService {
       
       // 准备发送给AI的提示
       const prompt = this.preparePrompt(diffContent);
+      this.outputChannel.appendLine(`[generateCommitMessage] 提示内容: ${prompt}`);
+      this.outputChannel.appendLine(`[generateCommitMessage] 使用的AI模型: ${this.aiModel}`);
+      this.outputChannel.appendLine(`[generateCommitMessage] 是否使用默认密钥: ${
+        this.aiModel === 'openai' 
+          ? this.openaiApiKey === AiService.DEFAULT_OPENAI_API_KEY
+          : this.qwenApiKey === AiService.DEFAULT_QWEN_API_KEY
+      }`);
       
       // 显示进度提示
       return await vscode.window.withProgress({
@@ -107,12 +144,17 @@ export class AiService {
    * @returns 格式化的提示
    */
   private preparePrompt(diffContent: string): string {
-    // 限制差异内容的长度，避免超出API限制
-    const maxDiffLength = 3000;
-    let truncatedDiff = diffContent;
+    // 根据当前使用的AI模型获取最大长度限制
+    const maxDiffLength = AiService.MAX_DIFF_LENGTH[this.aiModel as keyof typeof AiService.MAX_DIFF_LENGTH] || 12000;
     
+    this.outputChannel.appendLine(`[preparePrompt] 当前AI模型: ${this.aiModel}`);
+    this.outputChannel.appendLine(`[preparePrompt] 差异内容长度: ${diffContent.length}`);
+    this.outputChannel.appendLine(`[preparePrompt] 最大允许长度: ${maxDiffLength}`);
+    
+    let truncatedDiff = diffContent;
     if (diffContent.length > maxDiffLength) {
-      truncatedDiff = diffContent.substring(0, maxDiffLength) + '...(内容已截断)';
+      truncatedDiff = diffContent.substring(0, maxDiffLength) + '\n...(内容已截断，完整差异过长)';
+      this.outputChannel.appendLine(`[preparePrompt] 差异内容已截断到 ${maxDiffLength} 字符`);
     }
     
     return `你是一个专业的SVN提交日志生成助手。请根据以下SVN差异内容，生成一个详细的提交日志。
@@ -212,13 +254,13 @@ ${truncatedDiff}
   private callQwenApi(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const requestData = JSON.stringify({
-        model: 'qwen-max',
+        model: 'qwen-plus',
         input: {
           prompt: prompt
         },
         parameters: {
-          max_tokens: 150,
-          temperature: 0.7,
+          max_tokens: 500,
+          temperature: 0.5,
           result_format: 'text'
         }
       });

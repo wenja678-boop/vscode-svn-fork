@@ -188,4 +188,32 @@ export class CommitLogStorage {
     const prefixes = this.getPrefixes();
     return prefixes.length > 0 ? prefixes[0] : '';
   }
+
+  /**
+   * 生成提交日志
+   * @param diff 文件差异信息
+   * @returns 生成的提交日志
+   */
+  public async generateCommitMessage(diff: string): Promise<string> {
+    try {
+        // 获取AI模型配置
+        const aiModel = vscode.workspace.getConfiguration('vscode-svn').get<string>('aiModel', 'openai');
+        const apiKey = aiModel === 'openai' 
+            ? vscode.workspace.getConfiguration('vscode-svn').get<string>('aiApiKey', '')
+            : vscode.workspace.getConfiguration('vscode-svn').get<string>('qwenApiKey', '');
+
+        if (!apiKey) {
+            throw new Error(`请先在设置中配置${aiModel === 'openai' ? 'OpenAI' : '通义千问'} API密钥`);
+        }
+
+        // 根据差异信息生成提交日志
+        const prompt = `请根据以下代码差异生成一个简洁的SVN提交日志：\n\n${diff}`;
+        
+        // 这里需要根据选择的AI模型调用相应的API
+        // 为简化示例，这里返回一个模拟的响应
+        return '自动生成的提交日志：\n' + diff.split('\n').slice(0, 3).join('\n');
+    } catch (error: any) {
+        throw new Error(`生成提交日志失败: ${error.message}`);
+    }
+  }
 } 
