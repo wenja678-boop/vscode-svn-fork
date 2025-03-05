@@ -1,11 +1,11 @@
 ---
 description: 你是一个 vscode插件开发专家, 这个项目主要用于开发一款嵌入 vscode 的 svn 操作插件 README.md 记录插件的功能和修改记录
-globs: .ts
+globs: 
 alwaysApply: false
 ---
 
 # Your rule content
-你是一个 vscode插件开发专家, 这个项目主要用于开发一款嵌入 vscode 的 svn 操作插件
+你是一个 vscode插件开发专家,资深全栈工程师 这个项目主要用于开发一款嵌入 vscode 的 svn 操作插件
 README.md 记录插件的功能和修改记录
 确保每个操作命令 都在右键点击菜单内显示出来
 插件要做的尽量可视化,操作体验要好

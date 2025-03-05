@@ -163,8 +163,7 @@ export class AiService {
 1. 按文件名分段落输出，每个文件的修改内容单独一段
 2. 每个文件段落的格式如下：
    - 第一行：文件名
-   - 第二行开始：分点说明修改内容，每个要点一行
-   - 最后一行：空行
+   - 第二行开始：总结重点，分点说明修改内容 简答 易懂，每个要点一行
 
 3. 分析要点应包含：
    - 修改了什么功能或内容
@@ -173,9 +172,7 @@ export class AiService {
    - 忽略无用的修改分析 例如只是一些换行, 空格, 等
 
 4. 对于每个文件的修改，要根据实际意义换行显示，使日志更易读
-5. 如果涉及多个相关文件的修改，要说明它们之间的关联
-6. 使用中文，内容要介于过于简洁和过于复杂之间
-7. 不要包含任何多余的格式或标记
+5. 使用中文，内容简单清晰
 
 SVN差异内容:
 ${truncatedDiff}
@@ -254,13 +251,11 @@ ${truncatedDiff}
   private callQwenApi(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const requestData = JSON.stringify({
-        model: 'qwen-plus',
+        model: 'qwen-turbo',
         input: {
           prompt: prompt
         },
         parameters: {
-          max_tokens: 500,
-          temperature: 0.5,
           result_format: 'text'
         }
       });

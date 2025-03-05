@@ -108,8 +108,8 @@ export class SvnCommitPanel {
       // 获取差异内容
       this.diffContent = await this.diffProvider.getDiff(this.filePath);
       
-      // 使用diffProvider的showDiff方法显示左右对比视图
-      this.hasChanges = await this.diffProvider.showDiff(this.filePath);
+      // 不再自动显示左右对比视图，只设置hasChanges标志
+      this.hasChanges = this.diffContent.length > 0;
       this.diffShown = true;
       
       // 更新提交面板
@@ -345,7 +345,10 @@ export class SvnCommitPanel {
           <div class="diff-container">
             <div class="file-info">${this.filePath}</div>
             <div class="status-message">${statusMessage}</div>
-            ${!this.diffShown ? '<button id="show-diff-button">显示差异视图</button>' : this.formatDiffContent(this.diffContent)}
+            <div class="diff-actions">
+              <button id="show-side-by-side-diff-button">显示左右对比视图</button>
+            </div>
+            ${this.formatDiffContent(this.diffContent)}
           </div>
           <div class="commit-container">
             <div class="prefix-container">
@@ -389,7 +392,7 @@ export class SvnCommitPanel {
           const commitButton = document.getElementById('commit-button');
           const cancelButton = document.getElementById('cancel-button');
           const commitMessage = document.getElementById('commit-message');
-          const showDiffButton = document.getElementById('show-diff-button');
+          const showSideBySideDiffButton = document.getElementById('show-side-by-side-diff-button');
           const generateMessageButton = document.getElementById('generate-message-button');
           const prefixInput = document.getElementById('prefix-input');
           const prefixSelect = document.getElementById('prefix-select');
@@ -415,11 +418,11 @@ export class SvnCommitPanel {
             });
           });
           
-          // 显示差异按钮点击事件
-          if (showDiffButton) {
-            showDiffButton.addEventListener('click', () => {
+          // 显示左右对比视图按钮点击事件
+          if (showSideBySideDiffButton) {
+            showSideBySideDiffButton.addEventListener('click', () => {
               vscode.postMessage({
-                command: 'showDiff'
+                command: 'showSideBySideDiff'
               });
             });
           }
@@ -636,8 +639,8 @@ export class SvnCommitPanel {
         case 'cancel':
           this.panel.dispose();
           break;
-        case 'showDiff':
-          await this.showDiffView();
+        case 'showSideBySideDiff':
+          await this.showSideBySideDiff();
           break;
         case 'generateCommitMessage':
           await this.generateCommitMessage();
@@ -671,5 +674,14 @@ export class SvnCommitPanel {
     this.diffShown = false;
     await this.updatePanelContent();
     await this.showDiffView();
+  }
+
+  // 添加新方法：显示左右对比视图
+  private async showSideBySideDiff() {
+    try {
+      await this.diffProvider.showDiff(this.filePath);
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`显示左右对比视图失败: ${error.message}`);
+    }
   }
 } 
