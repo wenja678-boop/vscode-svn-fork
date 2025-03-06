@@ -330,6 +330,25 @@ export class SvnFolderCommitPanel {
                     case 'selectedFiles':
                         // 处理选中的文件列表
                         return;
+                    case 'showSideBySideDiff':
+                        // 查找文件状态
+                        const fileStatus = this._fileStatuses.find(f => f.path === message.file);
+                        if (fileStatus && fileStatus.type === 'modified') {
+                            // 如果是修改状态，显示左右对比
+                            await this.diffProvider.showDiff(message.file);
+                        } else {
+                            // 其他状态，直接打开文件
+                            const uri = vscode.Uri.file(message.file);
+                            try {
+                                await vscode.commands.executeCommand('vscode.open', uri);
+                            } catch (error: any) {
+                                vscode.window.showErrorMessage(`打开文件失败: ${error.message}`);
+                            }
+                        }
+                        return;
+                    case 'revertFile':
+                        await this._revertFile(message.file);
+                        return;
                 }
             },
             null,
@@ -401,7 +420,7 @@ export class SvnFolderCommitPanel {
             position: sticky;
             top: 0;
             display: grid;
-            grid-template-columns: 30px minmax(150px, 2fr) minmax(200px, 3fr) 80px 100px;
+            grid-template-columns: 30px minmax(150px, 2fr) minmax(200px, 3fr) 100px 180px;
             padding: 8px;
             font-weight: bold;
             background-color: var(--vscode-panel-background);
@@ -410,7 +429,7 @@ export class SvnFolderCommitPanel {
         }
         .file-item { 
             display: grid;
-            grid-template-columns: 30px minmax(150px, 2fr) minmax(200px, 3fr) 80px 100px;
+            grid-template-columns: 30px minmax(150px, 2fr) minmax(200px, 3fr) 100px 180px;
             padding: 4px 8px;
             cursor: pointer;
             align-items: center;
@@ -433,9 +452,30 @@ export class SvnFolderCommitPanel {
         }
         .file-status {
             text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            padding: 0 4px;
         }
         .file-action {
             text-align: right;
+            display: flex;
+            gap: 4px;
+            justify-content: flex-end;
+            min-width: 0;
+        }
+        .file-action button {
+            padding: 2px 4px;
+            font-size: 11px;
+            white-space: nowrap;
+            min-width: fit-content;
+        }
+        .revert-button {
+            background-color: var(--vscode-errorForeground) !important;
+            opacity: 0.8;
+        }
+        .revert-button:hover {
+            opacity: 1;
         }
         .status-modified { color: #FFCC00; }
         .status-added { color: #73C991; }
@@ -616,6 +656,8 @@ export class SvnFolderCommitPanel {
                 document.querySelectorAll('.file-item').forEach(item => {
                     const checkbox = item.querySelector('.file-checkbox');
                     const diffButton = item.querySelector('.diff-button');
+                    const sideBySideButton = item.querySelector('.side-by-side-button');
+                    const revertButton = item.querySelector('.revert-button');
                     const filePath = item.getAttribute('data-path');
 
                     if (checkbox) {
@@ -633,6 +675,20 @@ export class SvnFolderCommitPanel {
                         diffButton.addEventListener('click', (e) => {
                             e.stopPropagation();
                             showDiff(filePath);
+                        });
+                    }
+
+                    if (sideBySideButton) {
+                        sideBySideButton.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            showSideBySideDiff(filePath);
+                        });
+                    }
+
+                    if (revertButton) {
+                        revertButton.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            revertFile(filePath);
                         });
                     }
                 });
@@ -717,6 +773,10 @@ export class SvnFolderCommitPanel {
                 vscode.postMessage({ command: 'showDiff', file: filePath });
             }
 
+            function showSideBySideDiff(filePath) {
+                vscode.postMessage({ command: 'showSideBySideDiff', file: filePath });
+            }
+
             function submitCommit() {
                 const message = document.getElementById('commitMessage').value;
                 if (!message) {
@@ -770,6 +830,10 @@ export class SvnFolderCommitPanel {
                 if (prefix) {
                     document.getElementById('prefixInput').value = prefix;
                 }
+            }
+
+            function revertFile(filePath) {
+                vscode.postMessage({ command: 'revertFile', file: filePath });
             }
 
             // 监听消息
@@ -836,6 +900,9 @@ export class SvnFolderCommitPanel {
                 statusClass = 'missing';
             }
 
+            // 确定是否显示恢复按钮（只在文件是已修改或已删除状态时显示）
+            const showRevertButton = file.type === 'modified' || file.type === 'deleted';
+
             return `
                 <div class="file-item status-${statusClass}" 
                      data-path="${escapedPath}"
@@ -845,11 +912,15 @@ export class SvnFolderCommitPanel {
                     </span>
                     <span class="file-name" title="${escapedFileName}">${escapedFileName}</span>
                     <span class="file-path" title="${escapedFilePath}">${escapedFilePath}</span>
-                    <span class="file-status">${file.status}</span>
+                    <span class="file-status" title="${file.status}">${file.status}</span>
                     <span class="file-action">
-                        ${file.type !== 'deleted' && file.type !== 'missing' ? 
-                            `<button class="diff-button">差异</button>` : 
-                            ''}
+                        ${file.type !== 'deleted' && file.type !== 'missing' ? `
+                            <button class="diff-button" title="查看内联差异">差异</button>
+                            <button class="side-by-side-button" title="${file.type === 'modified' ? '查看左右对比' : '打开文件'}">${file.type === 'modified' ? '对比' : '打开'}</button>
+                        ` : ''}
+                        ${showRevertButton ? `
+                            <button class="revert-button" title="恢复文件修改">恢复</button>
+                        ` : ''}
                     </span>
                 </div>
             `;
@@ -901,6 +972,25 @@ export class SvnFolderCommitPanel {
                 return `<div>${line}</div>`;
             })
             .join('');
+    }
+
+    private async _revertFile(filePath: string): Promise<void> {
+        try {
+            const result = await vscode.window.showWarningMessage(
+                '确定要恢复此文件的修改吗？此操作不可撤销。',
+                '确定',
+                '取消'
+            );
+
+            if (result === '确定') {
+                await this.svnService.revertFile(filePath);
+                vscode.window.showInformationMessage('文件已成功恢复');
+                // 刷新文件状态列表
+                await this._update();
+            }
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`恢复文件失败: ${error.message}`);
+        }
     }
 
     public dispose() {
