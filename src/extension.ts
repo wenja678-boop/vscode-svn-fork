@@ -360,6 +360,66 @@ async function updateDirectory(fsPath: string): Promise<void> {
   }
 }
 
+/**
+ * 恢复文件到版本库状态
+ * @param filePath 文件路径
+ */
+async function revertFile(filePath: string): Promise<void> {
+  try {
+    // 检查SVN是否已安装
+    if (!await svnService.isSvnInstalled()) {
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      return;
+    }
+    
+    // 检查文件是否在SVN工作副本中
+    if (!await svnService.isInWorkingCopy(filePath)) {
+      const result = await vscode.window.showErrorMessage(
+        '该文件不在SVN工作副本中',
+        '设置SVN工作副本路径',
+        '取消'
+      );
+      
+      if (result === '设置SVN工作副本路径') {
+        await setSvnWorkingCopyRoot();
+        // 重新检查
+        if (!await svnService.isInWorkingCopy(filePath)) {
+          vscode.window.showErrorMessage('文件仍不在SVN工作副本中，请检查设置的路径是否正确');
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    // 获取文件状态
+    const status = await svnService.getFileStatus(filePath);
+    
+    // 如果文件未修改，提示用户
+    if (status === '正常') {
+      vscode.window.showInformationMessage('文件未修改，无需恢复');
+      return;
+    }
+
+    // 确认是否要恢复文件
+    const confirm = await vscode.window.showWarningMessage(
+      '确定要恢复文件到版本库状态吗？这将丢失所有本地修改。',
+      '确定',
+      '取消'
+    );
+
+    if (confirm !== '确定') {
+      return;
+    }
+
+    // 恢复文件
+    await svnService.revertFile(filePath);
+    vscode.window.showInformationMessage('文件已成功恢复到版本库状态');
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`SVN操作失败: ${error.message}`);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -499,6 +559,27 @@ export function activate(context: vscode.ExtensionContext) {
     await updateDirectory(workspaceFolder.uri.fsPath);
   });
   
+  // 注册恢复文件命令
+  const revertFileCommand = vscode.commands.registerCommand('vscode-svn.revertFile', async (fileUri?: vscode.Uri) => {
+    if (!fileUri) {
+      // 如果没有通过右键菜单选择文件，则使用当前活动编辑器中的文件
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        fileUri = activeEditor.document.uri;
+      } else {
+        vscode.window.showErrorMessage('没有选择文件');
+        return;
+      }
+    }
+    
+    if (fileUri.scheme !== 'file') {
+      vscode.window.showErrorMessage('只能恢复本地文件');
+      return;
+    }
+    
+    await revertFile(fileUri.fsPath);
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -507,7 +588,8 @@ export function activate(context: vscode.ExtensionContext) {
     clearSvnRootCommand,
     updateFileCommand,
     updateDirectoryCommand,
-    updateWorkspaceCommand
+    updateWorkspaceCommand,
+    revertFileCommand
   );
 }
 

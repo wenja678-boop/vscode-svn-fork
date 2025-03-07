@@ -16,6 +16,7 @@
     "onCommand:vscode-svn.uploadFile",
     "onCommand:vscode-svn.uploadFolder",
     "onCommand:vscode-svn.commitFile",
+    "onCommand:vscode-svn.revertFile",
     "onCommand:vscode-svn.setSvnRoot",
     "onCommand:vscode-svn.clearSvnRoot",
     "onCommand:vscode-svn.updateFile",
@@ -29,6 +30,10 @@
       {
         "command": "vscode-svn.uploadFile",
         "title": "SVN: 上传文件"
+      },
+      {
+        "command": "vscode-svn.revertFile",
+        "title": "SVN: 恢复文件"
       },
       {
         "command": "vscode-svn.uploadFolder",
@@ -67,6 +72,11 @@
           "group": "svn"
         },
         {
+          "command": "vscode-svn.revertFile",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "svn"
+        },
+        {
           "command": "vscode-svn.uploadFolder",
           "when": "explorerResourceIsFolder",
           "group": "svn"
@@ -95,6 +105,11 @@
       "editor/context": [
         {
           "command": "vscode-svn.commitFile",
+          "when": "resourceScheme == file",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.revertFile",
           "when": "resourceScheme == file",
           "group": "svn"
         },

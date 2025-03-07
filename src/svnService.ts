@@ -382,28 +382,15 @@ export class SvnService {
   }
 
   /**
-   * 还原文件修改
+   * 恢复文件到版本库状态
    * @param filePath 文件路径
    */
   public async revertFile(filePath: string): Promise<void> {
-    let cwd = path.dirname(filePath);
-    let fileName = path.basename(filePath);
-    
-    // 如果有自定义SVN根目录，检查是否需要使用它
-    if (this.getCustomSvnRoot()) {
-      try {
-        await this.executeSvnCommand(`info "${fileName}"`, cwd);
-      } catch (error) {
-        // 如果直接检查失败，使用自定义根目录
-        const relativePath = path.relative(this.getCustomSvnRoot()!, filePath);
-        if (!relativePath.startsWith('..')) {
-          cwd = this.getCustomSvnRoot()!;
-          fileName = relativePath;
-        }
-      }
+    try {
+      await this.executeSvnCommand(`revert "${filePath}"`, path.dirname(filePath));
+    } catch (error: any) {
+      throw new Error(`恢复文件失败: ${error.message}`);
     }
-    
-    await this.executeSvnCommand(`revert "${fileName}"`, cwd);
   }
 
   /**
