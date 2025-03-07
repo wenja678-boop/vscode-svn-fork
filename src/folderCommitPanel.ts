@@ -570,6 +570,29 @@ export class SvnFolderCommitPanel {
             padding: 8px;
             box-sizing: border-box;
         }
+        .extension-filter {
+            margin-top: 10px;
+        }
+        
+        #extensionFilter {
+            width: 100%;
+            min-height: 30px;
+            background-color: var(--vscode-dropdown-background);
+            color: var(--vscode-dropdown-foreground);
+            border: 1px solid var(--vscode-dropdown-border);
+            padding: 4px;
+        }
+        
+        #extensionFilter option {
+            padding: 4px;
+        }
+        
+        .extension-filter-label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 12px;
+            color: var(--vscode-foreground);
+        }
     </style>
 </head>
 <body>
@@ -591,6 +614,11 @@ export class SvnFolderCommitPanel {
                 <input type="checkbox" id="unversioned-checkbox" checked>
                 未版本控制
             </label>
+        </div>
+        <div class="extension-filter">
+            <label class="extension-filter-label">文件后缀筛选：</label>
+            <select id="extensionFilter" multiple>
+            </select>
         </div>
     </div>
 
@@ -633,6 +661,7 @@ export class SvnFolderCommitPanel {
             const vscode = acquireVsCodeApi();
             let selectedFiles = new Set();
             let enabledTypes = new Set(['modified', 'added', 'deleted', 'unversioned']);
+            let selectedExtensions = new Set();
 
             function initializeEventListeners() {
                 // 类型过滤复选框
@@ -693,6 +722,18 @@ export class SvnFolderCommitPanel {
                     }
                 });
 
+                // 添加后缀筛选的事件监听
+                const extensionFilter = document.getElementById('extensionFilter');
+                if (extensionFilter) {
+                    extensionFilter.addEventListener('change', (e) => {
+                        selectedExtensions.clear();
+                        Array.from(e.target.selectedOptions).forEach(option => {
+                            selectedExtensions.add(option.value);
+                        });
+                        updateFileList();
+                    });
+                }
+
                 // 初始化页面状态
                 updateFileList();
                 updateCheckboxes();
@@ -715,7 +756,15 @@ export class SvnFolderCommitPanel {
                 
                 fileItems.forEach(item => {
                     const type = item.getAttribute('data-type');
-                    if (enabledTypes.has(type)) {
+                    const fileName = item.querySelector('.file-name').textContent;
+                    const ext = fileName.includes('.') ? 
+                        '.' + fileName.split('.').pop().toLowerCase() : 
+                        '(无后缀)';
+                    
+                    const typeMatch = enabledTypes.has(type);
+                    const extensionMatch = selectedExtensions.size === 0 || selectedExtensions.has(ext);
+                    
+                    if (typeMatch && extensionMatch) {
                         item.style.display = '';
                         visibleCount++;
                     } else {
@@ -836,6 +885,26 @@ export class SvnFolderCommitPanel {
                 vscode.postMessage({ command: 'revertFile', file: filePath });
             }
 
+            function updateExtensionFilter() {
+                const extensions = new Set();
+                document.querySelectorAll('.file-item').forEach(item => {
+                    const fileName = item.querySelector('.file-name').textContent;
+                    const ext = fileName.includes('.') ? 
+                        '.' + fileName.split('.').pop().toLowerCase() : 
+                        '(无后缀)';
+                    extensions.add(ext);
+                });
+
+                const extensionFilter = document.getElementById('extensionFilter');
+                if (extensionFilter) {
+                    const selectedValues = Array.from(selectedExtensions);
+                    extensionFilter.innerHTML = Array.from(extensions)
+                        .sort()
+                        .map(ext => \`<option value="\${ext}" \${selectedValues.includes(ext) ? 'selected' : ''}>\${ext}</option>\`)
+                        .join('');
+                }
+            }
+
             // 监听消息
             window.addEventListener('message', event => {
                 const message = event.data;
@@ -870,7 +939,12 @@ export class SvnFolderCommitPanel {
             });
 
             // 页面加载完成后初始化
-            document.addEventListener('DOMContentLoaded', initializeEventListeners);
+            document.addEventListener('DOMContentLoaded', () => {
+                initializeEventListeners();
+                updateExtensionFilter();
+                updateFileList();
+                updateCheckboxes();
+            });
         })();
     </script>
 </body>
