@@ -5,6 +5,7 @@ import { SvnCommitPanel } from './commitPanel';
 import { SvnUpdatePanel } from './updatePanel';
 import { CommitLogStorage } from './commitLogStorage';
 import { SvnFolderCommitPanel } from './folderCommitPanel';
+import { SvnLogPanel } from './svnLogPanel';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -420,6 +421,45 @@ async function revertFile(filePath: string): Promise<void> {
   }
 }
 
+/**
+ * 查看SVN日志
+ * @param fsPath 文件或文件夹路径
+ */
+async function viewSvnLog(fsPath: string): Promise<void> {
+  try {
+    // 检查SVN是否已安装
+    if (!await svnService.isSvnInstalled()) {
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      return;
+    }
+    
+    // 检查文件是否在SVN工作副本中
+    if (!await svnService.isInWorkingCopy(fsPath)) {
+      const result = await vscode.window.showErrorMessage(
+        '该文件不在SVN工作副本中',
+        '设置SVN工作副本路径',
+        '取消'
+      );
+      
+      if (result === '设置SVN工作副本路径') {
+        await setSvnWorkingCopyRoot();
+        // 重新检查
+        if (!await svnService.isInWorkingCopy(fsPath)) {
+          vscode.window.showErrorMessage('文件仍不在SVN工作副本中，请检查设置的路径是否正确');
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+    
+    // 打开SVN日志面板
+    await SvnLogPanel.createOrShow(vscode.Uri.file(__dirname), fsPath, svnService);
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`查看SVN日志失败: ${error.message}`);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -580,6 +620,27 @@ export function activate(context: vscode.ExtensionContext) {
     await revertFile(fileUri.fsPath);
   });
   
+  // 注册查看SVN日志命令
+  const viewLogCommand = vscode.commands.registerCommand('vscode-svn.viewLog', async (fileUri?: vscode.Uri) => {
+    if (!fileUri) {
+      // 如果没有通过右键菜单选择文件，则使用当前活动编辑器中的文件
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        fileUri = activeEditor.document.uri;
+      } else {
+        vscode.window.showErrorMessage('没有选择文件或文件夹');
+        return;
+      }
+    }
+    
+    if (fileUri.scheme !== 'file') {
+      vscode.window.showErrorMessage('只能查看本地文件或文件夹的SVN日志');
+      return;
+    }
+    
+    await viewSvnLog(fileUri.fsPath);
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -589,7 +650,8 @@ export function activate(context: vscode.ExtensionContext) {
     updateFileCommand,
     updateDirectoryCommand,
     updateWorkspaceCommand,
-    revertFileCommand
+    revertFileCommand,
+    viewLogCommand
   );
 }
 

@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN",
   "description": "继承了svn基本功能,并增加了AI提交日志功能",
-  "version": "4.2.4",
+  "version": "4.2.5",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -22,6 +22,7 @@
     "onCommand:vscode-svn.updateFile",
     "onCommand:vscode-svn.updateDirectory",
     "onCommand:vscode-svn.updateWorkspace",
+    "onCommand:vscode-svn.viewLog",
     "workspaceContains:.svn"
   ],
   "main": "./out/extension.js",
@@ -62,6 +63,10 @@
       {
         "command": "vscode-svn.updateWorkspace",
         "title": "SVN: 更新工作区"
+      },
+      {
+        "command": "vscode-svn.viewLog",
+        "title": "SVN: 查看日志记录"
       }
     ],
     "menus": {
@@ -97,6 +102,11 @@
           "group": "svn"
         },
         {
+          "command": "vscode-svn.viewLog",
+          "when": "resourceScheme == file",
+          "group": "svn"
+        },
+        {
           "command": "vscode-svn.setSvnRoot",
           "when": "explorerResourceIsFolder",
           "group": "svn@1"
@@ -115,6 +125,11 @@
         },
         {
           "command": "vscode-svn.updateFile",
+          "when": "resourceScheme == file",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.viewLog",
           "when": "resourceScheme == file",
           "group": "svn"
         }
