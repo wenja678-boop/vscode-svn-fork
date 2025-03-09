@@ -110,5 +110,6 @@ Key Conventions
 	•	Prefer server components and Next.js SSR features.
 	•	Use use client only for Web API access in small components.
 	•	Avoid using use client for data fetching or state management.
+Docs svn https://subversion.apache.org/docs/release-notes/1.14.html
 
 Refer to Next.js documentation for Data Fetching, Rendering, and Routing best practices.

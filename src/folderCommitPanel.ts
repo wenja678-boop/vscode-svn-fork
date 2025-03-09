@@ -659,10 +659,110 @@ export class SvnFolderCommitPanel {
     <script>
         (function() {
             const vscode = acquireVsCodeApi();
-            let selectedFiles = new Set();
-            let enabledTypes = new Set(['modified', 'added', 'deleted', 'unversioned']);
-            let selectedExtensions = new Set();
+            
+            // 从状态中恢复或初始化
+            const previousState = vscode.getState() || { 
+                selectedFiles: [],
+                enabledTypes: ['modified', 'added', 'deleted', 'unversioned'],
+                selectedExtensions: []
+            };
+            
+            let selectedFiles = new Set(previousState.selectedFiles);
+            let enabledTypes = new Set(previousState.enabledTypes);
+            let selectedExtensions = new Set(previousState.selectedExtensions);
+            
+            // 保存状态的函数
+            function saveState() {
+                vscode.setState({
+                    selectedFiles: Array.from(selectedFiles),
+                    enabledTypes: Array.from(enabledTypes),
+                    selectedExtensions: Array.from(selectedExtensions)
+                });
+            }
+            
+            // 在状态变化的地方调用 saveState
+            function toggleFileType(type) {
+                if (enabledTypes.has(type)) {
+                    enabledTypes.delete(type);
+                    document.getElementById(type + '-checkbox').checked = false;
+                } else {
+                    enabledTypes.add(type);
+                    document.getElementById(type + '-checkbox').checked = true;
+                }
+                updateFileList();
+                saveState();  // 保存状态
+            }
+            
+            // 修改文件选择函数
+            function toggleAllFiles(checked) {
+                const visibleFiles = Array.from(document.querySelectorAll('.file-item'))
+                    .filter(item => item.style.display !== 'none')
+                    .map(item => item.getAttribute('data-path'));
+                
+                if (checked) {
+                    visibleFiles.forEach(path => selectedFiles.add(path));
+                } else {
+                    visibleFiles.forEach(path => selectedFiles.delete(path));
+                }
+                updateCheckboxes();
+                saveState();  // 保存状态
+            }
+            
+            // 同样在文件项的点击事件中添加状态保存
+            document.querySelectorAll('.file-item').forEach(item => {
+                const checkbox = item.querySelector('.file-checkbox');
+                const diffButton = item.querySelector('.diff-button');
+                const sideBySideButton = item.querySelector('.side-by-side-button');
+                const revertButton = item.querySelector('.revert-button');
+                const filePath = item.getAttribute('data-path');
 
+                if (checkbox) {
+                    checkbox.addEventListener('change', (e) => {
+                        if (e.target.checked) {
+                            selectedFiles.add(filePath);
+                        } else {
+                            selectedFiles.delete(filePath);
+                        }
+                        updateSelectAllCheckbox();
+                        saveState();  // 保存状态
+                    });
+                }
+
+                if (diffButton) {
+                    diffButton.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        showDiff(filePath);
+                    });
+                }
+
+                if (sideBySideButton) {
+                    sideBySideButton.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        showSideBySideDiff(filePath);
+                    });
+                }
+
+                if (revertButton) {
+                    revertButton.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        revertFile(filePath);
+                    });
+                }
+            });
+            
+            // 在扩展筛选器变化时也保存状态
+            const extensionFilter = document.getElementById('extensionFilter');
+            if (extensionFilter) {
+                extensionFilter.addEventListener('change', (e) => {
+                    selectedExtensions.clear();
+                    Array.from(e.target.selectedOptions).forEach(option => {
+                        selectedExtensions.add(option.value);
+                    });
+                    updateFileList();
+                    saveState();  // 保存状态
+                });
+            }
+            
             function initializeEventListeners() {
                 // 类型过滤复选框
                 document.getElementById('modified-checkbox').addEventListener('change', () => toggleFileType('modified'));
@@ -681,73 +781,9 @@ export class SvnFolderCommitPanel {
                 document.getElementById('submitButton').addEventListener('click', submitCommit);
                 document.getElementById('generateAIButton').addEventListener('click', generateAILog);
 
-                // 文件项点击事件
-                document.querySelectorAll('.file-item').forEach(item => {
-                    const checkbox = item.querySelector('.file-checkbox');
-                    const diffButton = item.querySelector('.diff-button');
-                    const sideBySideButton = item.querySelector('.side-by-side-button');
-                    const revertButton = item.querySelector('.revert-button');
-                    const filePath = item.getAttribute('data-path');
-
-                    if (checkbox) {
-                        checkbox.addEventListener('change', (e) => {
-                            if (e.target.checked) {
-                                selectedFiles.add(filePath);
-                            } else {
-                                selectedFiles.delete(filePath);
-                            }
-                            updateSelectAllCheckbox();
-                        });
-                    }
-
-                    if (diffButton) {
-                        diffButton.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            showDiff(filePath);
-                        });
-                    }
-
-                    if (sideBySideButton) {
-                        sideBySideButton.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            showSideBySideDiff(filePath);
-                        });
-                    }
-
-                    if (revertButton) {
-                        revertButton.addEventListener('click', (e) => {
-                            e.stopPropagation();
-                            revertFile(filePath);
-                        });
-                    }
-                });
-
-                // 添加后缀筛选的事件监听
-                const extensionFilter = document.getElementById('extensionFilter');
-                if (extensionFilter) {
-                    extensionFilter.addEventListener('change', (e) => {
-                        selectedExtensions.clear();
-                        Array.from(e.target.selectedOptions).forEach(option => {
-                            selectedExtensions.add(option.value);
-                        });
-                        updateFileList();
-                    });
-                }
-
                 // 初始化页面状态
                 updateFileList();
                 updateCheckboxes();
-            }
-
-            function toggleFileType(type) {
-                if (enabledTypes.has(type)) {
-                    enabledTypes.delete(type);
-                    document.getElementById(type + '-checkbox').checked = false;
-                } else {
-                    enabledTypes.add(type);
-                    document.getElementById(type + '-checkbox').checked = true;
-                }
-                updateFileList();
             }
 
             function updateFileList() {
@@ -777,19 +813,6 @@ export class SvnFolderCommitPanel {
                 });
                 
                 updateSelectAllCheckbox();
-            }
-
-            function toggleAllFiles(checked) {
-                const visibleFiles = Array.from(document.querySelectorAll('.file-item'))
-                    .filter(item => item.style.display !== 'none')
-                    .map(item => item.getAttribute('data-path'));
-                
-                if (checked) {
-                    visibleFiles.forEach(path => selectedFiles.add(path));
-                } else {
-                    visibleFiles.forEach(path => selectedFiles.delete(path));
-                }
-                updateCheckboxes();
             }
 
             function updateCheckboxes() {

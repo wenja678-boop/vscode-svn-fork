@@ -11,5 +11,7 @@ vsc-extension-quickstart.md
 **/*.ts
 .github/**
 node_modules/**
+!node_modules/@xmldom
+!node_modules/@xmldom/**
 .git/**
 **/*.vsix 

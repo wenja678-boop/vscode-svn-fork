@@ -1,6 +1,6 @@
 # VSCode SVN 插件
 
-这是一个为Visual Studio Code开发的SVN（Subversion）版本控制系统集成插件，旨在提供全面的SVN操作功能，使开发者能够直接在VSCode中进行SVN相关操作。
+继承了svn基本功能,并增加了AI提交日志功能 方便非windows使用
 
 ## 功能特性
 
