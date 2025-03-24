@@ -67,7 +67,7 @@ export class SvnService {
           { 
             cwd: path, 
             env,
-            maxBuffer: 10 * 1024 * 1024 // 增加缓冲区大小到10MB
+            maxBuffer: 50 * 1024 * 1024 // 增加缓冲区大小到50MB
           },
           (error, stdout, stderr) => {
             if (error) {

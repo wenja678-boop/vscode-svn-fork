@@ -524,6 +524,10 @@ export class SvnLogPanel {
                         this._log(`查看文件差异: 路径=${message.path}, 修订版本=${message.revision}`);
                         await this._viewFileDiff(message.path, message.revision);
                         break;
+                    case 'filterLogs':
+                        this._log(`筛选日志: 修订版本=${message.revision || '无'}, 作者=${message.author || '无'}, 内容=${message.content || '无'}, 起始日期=${message.startDate || '无'}, 结束日期=${message.endDate || '无'}, 使用日期=${message.useDate || false}`);
+                        await this._filterLogs(message.revision, message.author, message.content, message.startDate, message.endDate, message.useDate || false);
+                        break;
                     case 'debug':
                         this._log(`[Webview调试] ${message.message}`);
                         break;
@@ -1025,6 +1029,110 @@ export class SvnLogPanel {
                     border-radius: 2px;
                     padding: 0 2px;
                 }
+                /* 筛选表单样式 */
+                .filter-form {
+                    padding: 10px;
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    background-color: var(--vscode-editor-background);
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 10px;
+                    align-items: center;
+                }
+                
+                .filter-mode-toggle {
+                    display: flex;
+                    align-items: center;
+                    margin-right: 15px;
+                    padding: 5px;
+                    background-color: var(--vscode-button-secondaryBackground);
+                    border-radius: 4px;
+                }
+                
+                #revisionFilterSection, #dateFilterSection {
+                    display: flex;
+                    gap: 10px;
+                }
+                
+                input[type="date"].filter-input {
+                    width: 140px;
+                    padding: 4px 8px;
+                }
+                
+                .filter-group {
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                }
+                
+                .filter-label {
+                    white-space: nowrap;
+                }
+                
+                .filter-input {
+                    background-color: var(--vscode-input-background);
+                    color: var(--vscode-input-foreground);
+                    border: 1px solid var(--vscode-input-border);
+                    padding: 4px 8px;
+                    border-radius: 2px;
+                    width: 120px;
+                }
+                
+                .filter-input:focus {
+                    outline: 1px solid var(--vscode-focusBorder);
+                    border-color: var(--vscode-focusBorder);
+                }
+                
+                .filter-button {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    padding: 6px 12px;
+                    cursor: pointer;
+                    border-radius: 2px;
+                    white-space: nowrap;
+                }
+                
+                .filter-button:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+                
+                .filter-clear {
+                    background-color: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
+                }
+                
+                .filter-clear:hover {
+                    background-color: var(--vscode-button-secondaryHoverBackground);
+                }
+                
+                .filter-result {
+                    margin-left: auto;
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 0.9em;
+                }
+                
+                /* 响应式设计 */
+                @media (max-width: 800px) {
+                    .filter-form {
+                        flex-direction: column;
+                        align-items: flex-start;
+                    }
+                    
+                    .filter-group {
+                        width: 100%;
+                    }
+                    
+                    .filter-input {
+                        flex: 1;
+                        width: auto;
+                    }
+                    
+                    .filter-result {
+                        margin-left: 0;
+                        margin-top: 5px;
+                    }
+                }
             </style>
         </head>
         <body>
@@ -1036,6 +1144,49 @@ export class SvnLogPanel {
                     <span>SVN日志: ${targetName}</span>
                 </div>
             </div>
+            
+            <!-- 日志筛选表单 -->
+            <div class="filter-form">
+                <div class="filter-mode-toggle">
+                    <label class="filter-label">
+                        <input type="checkbox" id="dateFilterToggle" class="filter-checkbox">
+                        <span>使用日期筛选</span>
+                    </label>
+                </div>
+                
+                <!-- 修订版本筛选区域 -->
+                <div id="revisionFilterSection">
+                    <div class="filter-group">
+                        <span class="filter-label">修订版本:</span>
+                        <input type="text" id="revisionFilter" class="filter-input" placeholder="如: 100 或 100:200">
+                    </div>
+                </div>
+                
+                <!-- 日期筛选区域 -->
+                <div id="dateFilterSection" style="display: none;">
+                    <div class="filter-group">
+                        <span class="filter-label">起始日期:</span>
+                        <input type="date" id="startDateFilter" class="filter-input">
+                    </div>
+                    <div class="filter-group">
+                        <span class="filter-label">结束日期:</span>
+                        <input type="date" id="endDateFilter" class="filter-input">
+                    </div>
+                </div>
+                
+                <div class="filter-group">
+                    <span class="filter-label">作者:</span>
+                    <input type="text" id="authorFilter" class="filter-input" placeholder="作者名称">
+                </div>
+                <div class="filter-group">
+                    <span class="filter-label">内容:</span>
+                    <input type="text" id="contentFilter" class="filter-input" placeholder="日志内容">
+                </div>
+                <button id="filterButton" class="filter-button">筛选</button>
+                <button id="clearFilterButton" class="filter-button filter-clear">清除</button>
+                <div class="filter-result" id="filterResult"></div>
+            </div>
+            
             <div class="container">
                 <div class="log-list" id="logList">
                     <div class="empty-state">
@@ -1061,6 +1212,38 @@ export class SvnLogPanel {
                     const logDetails = document.getElementById('logDetails');
                     const loading = document.getElementById('loading');
                     const refreshButton = document.getElementById('refreshButton');
+                    
+                    // 筛选表单元素
+                    const revisionFilter = document.getElementById('revisionFilter');
+                    const authorFilter = document.getElementById('authorFilter');
+                    const contentFilter = document.getElementById('contentFilter');
+                    const filterButton = document.getElementById('filterButton');
+                    const clearFilterButton = document.getElementById('clearFilterButton');
+                    const filterResult = document.getElementById('filterResult');
+                    
+                    // 日期筛选表单元素
+                    const dateFilterToggle = document.getElementById('dateFilterToggle');
+                    const revisionFilterSection = document.getElementById('revisionFilterSection');
+                    const dateFilterSection = document.getElementById('dateFilterSection');
+                    const startDateFilter = document.getElementById('startDateFilter');
+                    const endDateFilter = document.getElementById('endDateFilter');
+                    
+                    // 默认设置当前日期为结束日期，三天前为开始日期
+                    const today = new Date();
+                    const threeDaysAgo = new Date(today);
+                    threeDaysAgo.setDate(today.getDate() - 3);
+                    
+                    // 格式化为 YYYY-MM-DD
+                    startDateFilter.value = threeDaysAgo.toISOString().split('T')[0];
+                    endDateFilter.value = today.toISOString().split('T')[0];
+                    
+                    // 日期筛选切换事件
+                    dateFilterToggle.addEventListener('change', () => {
+                        const useDate = dateFilterToggle.checked;
+                        revisionFilterSection.style.display = useDate ? 'none' : 'block';
+                        dateFilterSection.style.display = useDate ? 'block' : 'none';
+                        debugLog('切换筛选模式: ' + (useDate ? '日期筛选' : '修订版本筛选'));
+                    });
                     
                     // 存储目标路径信息
                     let targetPath = "${this._targetPath.replace(/\\/g, '\\\\')}";
@@ -1159,8 +1342,8 @@ export class SvnLogPanel {
                                 }
                                 break;
                             case 'updateTargetPath':
-                                debugLog('更新目标路径: ' + message.targetPath);
-                                targetPath = message.targetPath;
+                                this._log('更新目标路径: ' + message.targetPath);
+                                this._targetPath = message.targetPath;
                                 break;
                             case 'showRevisionDetails':
                                 debugLog('显示修订版本详情: ' + message.revision);
@@ -1183,6 +1366,18 @@ export class SvnLogPanel {
                                 }
                                 
                                 renderRevisionDetails(message.details);
+                                break;
+                            case 'filterResult':
+                                debugLog('筛选结果: ' + message.count + ' 条记录');
+                                if (message.error) {
+                                    // 如果有错误信息，显示错误
+                                    filterResult.textContent = message.error;
+                                    filterResult.style.color = 'var(--vscode-errorForeground)';
+                                } else {
+                                    // 显示正常结果
+                                    filterResult.textContent = '找到 ' + message.count + ' 条记录';
+                                    filterResult.style.color = 'var(--vscode-descriptionForeground)';
+                                }
                                 break;
                         }
                     });
@@ -1566,6 +1761,81 @@ export class SvnLogPanel {
                         }
                     }
                     
+                    // 筛选按钮点击事件
+                    filterButton.addEventListener('click', () => {
+                        const useDate = dateFilterToggle.checked;
+                        const revision = revisionFilter.value.trim();
+                        const author = authorFilter.value.trim();
+                        const content = contentFilter.value.trim();
+                        const startDate = startDateFilter.value.trim();
+                        const endDate = endDateFilter.value.trim();
+                        
+                        debugLog('执行筛选: 使用日期=' + useDate + 
+                                 ', 修订版本=' + (revision || '无') + 
+                                 ', 作者=' + (author || '无') + 
+                                 ', 内容=' + (content || '无') + 
+                                 ', 起始日期=' + (startDate || '无') + 
+                                 ', 结束日期=' + (endDate || '无'));
+                        
+                        // 确保至少有一个筛选条件
+                        if (useDate) {
+                            // 日期筛选模式下，如果未设置日期，将使用默认的3天
+                            if (!author && !content && !startDate && !endDate) {
+                                debugLog('没有输入筛选条件，日期筛选模式下将使用默认的3天');
+                            }
+                        } else {
+                            // 修订版本筛选模式下，确保至少有一个筛选条件
+                            if (!revision && !author && !content) {
+                                debugLog('没有输入筛选条件');
+                                filterResult.textContent = '请至少输入一个筛选条件';
+                                return;
+                            }
+                        }
+                        
+                        // 发送筛选消息到扩展
+                        vscode.postMessage({
+                            command: 'filterLogs',
+                            revision: revision,
+                            author: author,
+                            content: content,
+                            startDate: startDate,
+                            endDate: endDate,
+                            useDate: useDate
+                        });
+                    });
+                    
+                    // 清除筛选按钮点击事件
+                    clearFilterButton.addEventListener('click', () => {
+                        debugLog('清除筛选条件');
+                        
+                        // 清空筛选输入框
+                        revisionFilter.value = '';
+                        authorFilter.value = '';
+                        contentFilter.value = '';
+                        startDateFilter.value = threeDaysAgo.toISOString().split('T')[0];
+                        endDateFilter.value = today.toISOString().split('T')[0];
+                        dateFilterToggle.checked = false;
+                        revisionFilterSection.style.display = 'block';
+                        dateFilterSection.style.display = 'none';
+                        filterResult.textContent = '';
+                        
+                        // 刷新日志列表
+                        vscode.postMessage({
+                            command: 'refresh'
+                        });
+                    });
+                    
+                    // 添加回车键提交筛选
+                    function handleFilterKeyPress(e) {
+                        if (e.key === 'Enter') {
+                            filterButton.click();
+                        }
+                    }
+                    
+                    revisionFilter.addEventListener('keypress', handleFilterKeyPress);
+                    authorFilter.addEventListener('keypress', handleFilterKeyPress);
+                    contentFilter.addEventListener('keypress', handleFilterKeyPress);
+                    
                     // 刷新按钮事件
                     refreshButton.addEventListener('click', () => {
                         debugLog('点击刷新按钮');
@@ -1634,6 +1904,136 @@ export class SvnLogPanel {
             }
         } catch (error: any) {
             this._log(`获取SVN相对路径失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 筛选日志条目
+     */
+    private async _filterLogs(revision: string, author: string, content: string, startDate?: string, endDate?: string, useDate: boolean = false) {
+        try {
+            this._log(`开始筛选日志: 修订版本=${revision || '无'}, 作者=${author || '无'}, 内容=${content || '无'}, 起始日期=${startDate || '无'}, 结束日期=${endDate || '无'}, 使用日期=${useDate}`);
+            
+            // 显示加载中状态
+            this._panel.webview.postMessage({ command: 'setLoading', value: true });
+            
+            // 构建SVN命令参数
+            let commandArgs = '';
+            
+            // 添加日期或修订版本筛选
+            if (useDate) {
+                // 使用日期筛选
+                if (startDate || endDate) {
+                    let dateRangeStr = '';
+                    
+                    // 构建日期范围，格式：{startDate}:{endDate}
+                    if (startDate && endDate) {
+                        dateRangeStr = `{${startDate}}:{${endDate}}`;
+                    } else if (startDate) {
+                        dateRangeStr = `{${startDate}}:HEAD`;
+                    } else if (endDate) {
+                        // 如果只有结束日期，从最早的版本开始
+                        dateRangeStr = `1:{${endDate}}`;
+                    }
+                    
+                    if (dateRangeStr) {
+                        commandArgs += ` -r ${dateRangeStr} `;
+                    }
+                } else {
+                    // 如果没有指定日期，默认显示最近3天的记录
+                    const now = new Date();
+                    const threeDaysAgo = new Date(now);
+                    threeDaysAgo.setDate(now.getDate() - 3);
+                    
+                    // 格式化日期，YYYY-MM-DD
+                    const startDateStr = `${threeDaysAgo.getFullYear()}-${String(threeDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(threeDaysAgo.getDate()).padStart(2, '0')}`;
+                    const endDateStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                    
+                    this._log(`未指定日期，使用默认日期范围: ${startDateStr} 至 ${endDateStr}`);
+                    commandArgs += ` -r {${startDateStr}}:{${endDateStr}} `;
+                }
+            } else {
+                // 使用修订版本筛选
+                if (revision && revision.trim()) {
+                    // 支持单个版本号、版本范围或多个版本号
+                    // 例如: 100, 100:200, 100,105,110
+                    commandArgs += ` -r ${revision.trim()} `;
+                } else {
+                    // 如果没有指定修订版本，默认获取最近50条记录
+                    const logLimit = 50;
+                    this._log(`未指定修订版本，默认获取最近${logLimit}条记录`);
+                    commandArgs += ` -l ${logLimit} `;
+                }
+            }
+            
+            // 如果没有使用日期参数且没有指定修订版本号，限制获取的日志条目数量，防止缓冲区溢出
+            if (!useDate && (!revision || !revision.trim())) {
+                const logLimit = 50; // 默认获取最近50条记录
+                commandArgs += ` -l ${logLimit} `;
+            }
+            
+            // 执行SVN命令获取筛选后的日志
+            const logCommand = `log "${this._targetPath}" ${commandArgs} --verbose --xml`;
+            this._log(`执行SVN命令: ${logCommand}`);
+            
+            const logXml = await this.svnService.executeSvnCommand(logCommand, path.dirname(this._targetPath), false);
+            
+            // 解析XML获取日志条目
+            this._logEntries = this._parseLogXml(logXml);
+            this._log(`解析得到 ${this._logEntries.length} 条日志条目`);
+            
+            // 客户端筛选（作者和内容）
+            if (author || content) {
+                const filteredEntries = this._logEntries.filter(entry => {
+                    // 作者筛选
+                    if (author && !entry.author.toLowerCase().includes(author.toLowerCase())) {
+                        return false;
+                    }
+                    
+                    // 内容筛选
+                    if (content && !entry.message.toLowerCase().includes(content.toLowerCase())) {
+                        return false;
+                    }
+                    
+                    return true;
+                });
+                
+                this._log(`客户端筛选后剩余 ${filteredEntries.length} 条日志条目`);
+                this._logEntries = filteredEntries;
+            }
+            
+            // 更新界面
+            this._updateLogList();
+            
+            // 隐藏加载状态
+            this._panel.webview.postMessage({ command: 'setLoading', value: false });
+            
+            // 发送筛选结果数量
+            this._panel.webview.postMessage({
+                command: 'filterResult',
+                count: this._logEntries.length
+            });
+        } catch (error: any) {
+            this._log(`筛选日志失败: ${error.message}`);
+            
+            // 给用户更友好的错误提示
+            let errorMessage = `筛选日志失败: ${error.message}`;
+            
+            // 处理特定错误类型
+            if (error.message.includes('maxBuffer length exceeded')) {
+                errorMessage = '日志数据量过大，请添加更具体的筛选条件或使用修订版本范围限制查询结果数量';
+                this._log('建议: 使用修订版本范围缩小查询范围，如: "1000:1100"');
+            }
+            
+            vscode.window.showErrorMessage(errorMessage);
+            this._panel.webview.postMessage({ command: 'setLoading', value: false });
+            
+            // 即使出错，也保持界面响应性
+            this._panel.webview.postMessage({
+                command: 'filterResult',
+                count: 0,
+                error: errorMessage
+            });
         }
     }
 
