@@ -184,14 +184,30 @@ export class SvnFolderCommitPanel {
             );
             
             if (unversionedFiles.length > 0) {
+                this.outputChannel.appendLine(`添加 ${unversionedFiles.length} 个未版本控制的文件`);
                 for (const file of unversionedFiles) {
                     await this.svnService.addFile(file);
                 }
             }
 
-            // 提交选中的文件
-            for (const file of files) {
-                await this.svnService.commit(file, message);
+            // 分离文件和目录
+            const fileEntries = await Promise.all(files.map(async file => {
+                const isDirectory = (await vscode.workspace.fs.stat(vscode.Uri.file(file))).type === vscode.FileType.Directory;
+                return { path: file, isDirectory };
+            }));
+            
+            const onlyFiles = fileEntries.filter(entry => !entry.isDirectory).map(entry => entry.path);
+            const directories = fileEntries.filter(entry => entry.isDirectory).map(entry => entry.path);
+            
+            // 如果只有文件，使用 commitFiles
+            if (onlyFiles.length > 0 && directories.length === 0) {
+                await this.svnService.commitFiles(onlyFiles, message, this.folderPath);
+            } 
+            // 如果有目录，或者混合了文件和目录，使用单独提交
+            else {
+                for (const file of files) {
+                    await this.svnService.commit(file, message);
+                }
             }
 
             // 保存提交日志

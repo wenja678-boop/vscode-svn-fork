@@ -419,4 +419,66 @@ export class SvnService {
     
     return await this.executeSvnCommand(`log "${fileName}" -l ${limit}`, cwd);
   }
+
+  /**
+   * 一次性提交多个文件
+   * @param files 文件路径数组
+   * @param message 提交信息
+   * @param basePath 基础路径（用于确定工作目录）
+   */
+  public async commitFiles(files: string[], message: string, basePath: string): Promise<void> {
+    try {
+      this.outputChannel.appendLine(`[commitFiles] 准备提交 ${files.length} 个文件`);
+      
+      if (files.length === 0) {
+        throw new Error('没有选择要提交的文件');
+      }
+      
+      // 检查是否使用自定义SVN根目录
+      let workingDir = basePath;
+      let fileArgs = '';
+      
+      if (this.getCustomSvnRoot()) {
+        try {
+          await this.executeSvnCommand('info', basePath);
+        } catch (error) {
+          // 如果直接检查失败，使用自定义根目录
+          workingDir = this.getCustomSvnRoot()!;
+          
+          // 构建相对路径参数
+          fileArgs = files.map(file => {
+            const relativePath = path.relative(this.getCustomSvnRoot()!, file);
+            if (relativePath.startsWith('..')) {
+              throw new Error(`文件 ${file} 不在SVN工作副本中`);
+            }
+            return `"${relativePath}"`;
+          }).join(' ');
+        }
+      }
+      
+      // 如果没有使用自定义SVN根目录，或者检查成功
+      if (fileArgs === '') {
+        // 构建文件参数
+        fileArgs = files.map(file => {
+          // 如果文件在基础路径下，使用相对路径
+          if (file.startsWith(workingDir)) {
+            return `"${path.relative(workingDir, file)}"`;
+          }
+          // 否则使用绝对路径
+          return `"${file}"`;
+        }).join(' ');
+      }
+      
+      this.outputChannel.appendLine(`[commitFiles] 工作目录: ${workingDir}`);
+      this.outputChannel.appendLine(`[commitFiles] 文件参数: ${fileArgs}`);
+      
+      // 执行提交命令
+      await this.executeSvnCommand(`commit ${fileArgs} -m "${message}"`, workingDir);
+      
+      this.outputChannel.appendLine(`[commitFiles] 提交成功`);
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[commitFiles] 提交失败: ${error.message}`);
+      throw error;
+    }
+  }
 } 
