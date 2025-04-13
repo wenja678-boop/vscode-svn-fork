@@ -1,0 +1,6 @@
+.no-more-logs {
+    text-align: center;
+    padding: 10px;
+    color: var(--vscode-descriptionForeground);
+    font-style: italic;
+} 

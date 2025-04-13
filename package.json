@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN",
   "description": "继承了svn基本功能,并增加了AI提交日志功能",
-  "version": "4.2.6",
+  "version": "4.3.0",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -23,6 +23,7 @@
     "onCommand:vscode-svn.updateDirectory",
     "onCommand:vscode-svn.updateWorkspace",
     "onCommand:vscode-svn.viewLog",
+    "onCommand:vscode-svn.showLocalRevision",
     "workspaceContains:.svn"
   ],
   "main": "./out/extension.js",
@@ -67,71 +68,85 @@
       {
         "command": "vscode-svn.viewLog",
         "title": "SVN: 查看日志记录"
+      },
+      {
+        "command": "vscode-svn.showLocalRevision",
+        "title": "SVN: 显示本地修订版本号"
       }
     ],
     "menus": {
       "explorer/context": [
         {
+          "command": "vscode-svn.showLocalRevision",
+          "when": "resourceScheme == file",
+          "group": "2_svn@1"
+        },
+        {
           "command": "vscode-svn.uploadFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.revertFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.uploadFolder",
           "when": "explorerResourceIsFolder",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.commitFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.updateFile",
           "when": "resourceScheme == file && !explorerResourceIsFolder",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.updateDirectory",
           "when": "explorerResourceIsFolder",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.viewLog",
           "when": "resourceScheme == file",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.setSvnRoot",
           "when": "explorerResourceIsFolder",
-          "group": "svn@1"
+          "group": "2_svn@9"
         }
       ],
       "editor/context": [
         {
+          "command": "vscode-svn.showLocalRevision",
+          "when": "resourceScheme == file",
+          "group": "2_svn@1"
+        },
+        {
           "command": "vscode-svn.commitFile",
           "when": "resourceScheme == file",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.revertFile",
           "when": "resourceScheme == file",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.updateFile",
           "when": "resourceScheme == file",
-          "group": "svn"
+          "group": "2_svn"
         },
         {
           "command": "vscode-svn.viewLog",
           "when": "resourceScheme == file",
-          "group": "svn"
+          "group": "2_svn"
         }
       ],
       "commandPalette": [
@@ -145,6 +160,10 @@
         },
         {
           "command": "vscode-svn.updateWorkspace",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.showLocalRevision",
           "group": "svn"
         }
       ],
@@ -182,6 +201,11 @@
           "type": "string",
           "default": "",
           "description": "用于生成提交日志的通义千问API密钥"
+        },
+        "vscode-svn.showUncommittedChanges": {
+          "type": "boolean",
+          "default": true,
+          "description": "在日志列表中显示未提交到本地的修改"
         }
       }
     }
@@ -213,7 +237,8 @@
     "scm",
     "版本控制",
     "差异对比",
-    "AI提交日志"
+    "AI提交日志",
+    "本地版本对比"
   ],
   "author": "summer198971",
   "license": "MIT",

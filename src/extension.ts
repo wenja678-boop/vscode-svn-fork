@@ -460,6 +460,64 @@ async function viewSvnLog(fsPath: string): Promise<void> {
   }
 }
 
+/**
+ * 显示文件或文件夹的本地修订版本号
+ * @param fsPath 文件或文件夹路径
+ */
+async function showLocalRevision(fsPath: string): Promise<void> {
+  try {
+    // 检查SVN是否已安装
+    if (!await svnService.isSvnInstalled()) {
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      return;
+    }
+    
+    // 检查文件是否在SVN工作副本中
+    if (!await svnService.isInWorkingCopy(fsPath)) {
+      const result = await vscode.window.showErrorMessage(
+        '该文件不在SVN工作副本中',
+        '设置SVN工作副本路径',
+        '取消'
+      );
+      
+      if (result === '设置SVN工作副本路径') {
+        await setSvnWorkingCopyRoot();
+        // 重新检查
+        if (!await svnService.isInWorkingCopy(fsPath)) {
+          vscode.window.showErrorMessage('文件仍不在SVN工作副本中，请检查设置的路径是否正确');
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+    
+    // 获取SVN信息
+    try {
+      // 使用SVN info命令获取版本信息
+      const infoCommand = `info --xml "${fsPath}"`;
+      const infoXml = await svnService.executeSvnCommand(infoCommand, require('path').dirname(fsPath), false);
+      
+      // 从XML中提取版本号
+      const revisionMatch = /<commit\s+revision="([^"]+)">/.exec(infoXml) || 
+                           /<entry\s+[^>]*?revision="([^"]+)"/.exec(infoXml);
+      
+      if (revisionMatch && revisionMatch[1]) {
+        const localRevision = revisionMatch[1];
+        
+        // 显示本地版本号
+        vscode.window.showInformationMessage(`本地修订版本号: ${localRevision}`);
+      } else {
+        vscode.window.showInformationMessage('未能获取本地修订版本号');
+      }
+    } catch (error: any) {
+      vscode.window.showErrorMessage(`获取SVN信息失败: ${error.message}`);
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`SVN操作失败: ${error.message}`);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -641,6 +699,27 @@ export function activate(context: vscode.ExtensionContext) {
     await viewSvnLog(fileUri.fsPath);
   });
   
+  // 注册显示本地修订版本号命令
+  const showLocalRevisionCommand = vscode.commands.registerCommand('vscode-svn.showLocalRevision', async (fileUri?: vscode.Uri) => {
+    if (!fileUri) {
+      // 如果没有通过右键菜单选择文件，则使用当前活动编辑器中的文件
+      const activeEditor = vscode.window.activeTextEditor;
+      if (activeEditor) {
+        fileUri = activeEditor.document.uri;
+      } else {
+        vscode.window.showErrorMessage('没有选择文件或文件夹');
+        return;
+      }
+    }
+    
+    if (fileUri.scheme !== 'file') {
+      vscode.window.showErrorMessage('只能查看本地文件或文件夹的本地修订版本号');
+      return;
+    }
+    
+    await showLocalRevision(fileUri.fsPath);
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -651,7 +730,8 @@ export function activate(context: vscode.ExtensionContext) {
     updateDirectoryCommand,
     updateWorkspaceCommand,
     revertFileCommand,
-    viewLogCommand
+    viewLogCommand,
+    showLocalRevisionCommand
   );
 }
 

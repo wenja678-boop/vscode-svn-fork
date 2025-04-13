@@ -13,6 +13,7 @@ interface SvnLogEntry {
     date: string;
     message: string;
     paths?: SvnLogPath[];
+    isNewerThanLocal?: boolean; // 添加标记，表示此版本是否比本地版本更新
 }
 
 /**
@@ -36,6 +37,9 @@ export class SvnLogPanel {
     private _targetPath: string;
     private _targetSvnRelativePath: string = ''; // 存储文件夹的SVN相对路径
     private _outputChannel: vscode.OutputChannel;
+    private _minLoadedRevision: string | null = null; // 记录已加载的最小版本号
+    private _isInitialLoad: boolean = true; // 标记是否为初始加载
+    private _localRevision: string | null = null; // 存储本地修订版本号
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -47,6 +51,8 @@ export class SvnLogPanel {
         this._targetPath = targetPath;
         this._outputChannel = vscode.window.createOutputChannel('SVN日志面板');
         this._log('SVN日志面板已创建，目标路径: ' + targetPath);
+        this._minLoadedRevision = null; // 确保初始化为null
+        this._isInitialLoad = true; // 初始加载标记
 
         // 设置网页视图内容
         this._panel.webview.html = this._getHtmlForWebview();
@@ -129,15 +135,39 @@ export class SvnLogPanel {
     /**
      * 加载SVN日志
      */
-    private async _loadLogs(limit: number = 50) {
+    private async _loadLogs(limit: number = 50, isLoadingMore: boolean = false) {
         try {
-            this._log(`开始加载SVN日志，限制数量: ${limit}`);
+            // 确定版本范围
+            let revisionRange = "HEAD:1";
+            
+            if (isLoadingMore && this._minLoadedRevision) {
+                // 如果是加载更多且已有最小版本号，从最小版本号的前一个版本开始获取
+                const minRevision = parseInt(this._minLoadedRevision);
+                revisionRange = `${minRevision - 1}:1`;
+                this._log(`加载更多日志，从版本 ${minRevision - 1} 开始，限制数量: ${limit}`);
+            } else {
+                // 首次加载或刷新操作，从HEAD开始
+                this._log(`初始加载日志，从HEAD开始，限制数量: ${limit}`);
+                // 清空已有日志和最小版本号
+                if (!isLoadingMore) {
+                    this._logEntries = [];
+                    this._minLoadedRevision = null;
+                    this._isInitialLoad = true;
+                }
+            }
+            
             // 显示加载中状态
             this._panel.webview.postMessage({ command: 'setLoading', value: true });
 
-            // 直接使用executeSvnCommand方法获取日志，确保使用--verbose参数
-            const logCommand = `log "${this._targetPath}" -l ${limit} --verbose --xml`;
+            // 获取本地修订版本号
+            if (!isLoadingMore || this._localRevision === null) {
+                await this._getLocalRevision();
+            }
+            
+            // 构建SVN命令，使用确定的版本范围
+            const logCommand = `log "${this._targetPath}" -r ${revisionRange} -l ${limit} --verbose --xml`;
             this._log(`执行SVN日志命令: ${logCommand}`);
+            
             const logXml = await this.svnService.executeSvnCommand(logCommand, path.dirname(this._targetPath), false);
             
             // 检查XML是否包含paths标签
@@ -146,69 +176,67 @@ export class SvnLogPanel {
                 
                 // 尝试使用不同的命令格式
                 this._log('尝试使用不同的命令格式获取详细日志');
-                const altCommand = `log -v "${this._targetPath}" -l ${limit} --xml`;
+                const altCommand = `log -v -r ${revisionRange} "${this._targetPath}" -l ${limit} --xml`;
                 this._log(`执行替代SVN命令: ${altCommand}`);
                 const altLogXml = await this.svnService.executeSvnCommand(altCommand, path.dirname(this._targetPath), false);
                 
                 if (altLogXml.includes('<paths>')) {
                     this._log('成功获取包含路径信息的日志');
                     // 解析XML日志
-                    this._logEntries = this._parseLogXml(altLogXml);
+                    const newEntries = this._parseLogXml(altLogXml);
+                    this._updateLogEntries(newEntries, isLoadingMore);
                 } else {
                     this._log('仍然无法获取路径信息，可能是SVN版本不支持或其他问题');
                     // 解析原始XML日志
-                    this._logEntries = this._parseLogXml(logXml);
+                    const newEntries = this._parseLogXml(logXml);
+                    this._updateLogEntries(newEntries, isLoadingMore);
                 }
             } else {
                 // 解析XML日志
                 this._log('解析SVN日志XML');
-                this._logEntries = this._parseLogXml(logXml);
+                const newEntries = this._parseLogXml(logXml);
+                this._updateLogEntries(newEntries, isLoadingMore);
             }
             
             this._log(`解析完成，获取到 ${this._logEntries.length} 条日志记录`);
             
-            // 记录日志条目的路径信息
-            this._logEntries.forEach((entry, index) => {
-                this._log(`日志条目 #${index + 1}, 修订版本: ${entry.revision}, 路径数量: ${entry.paths?.length || 0}`);
-                if (entry.paths && entry.paths.length > 0) {
-                    entry.paths.slice(0, 3).forEach((path, pathIndex) => {
-                        this._log(`  - 路径 #${pathIndex + 1}: 操作=${path.action}, 路径=${path.path}`);
-                    });
-                    if (entry.paths.length > 3) {
-                        this._log(`  - ... 还有 ${entry.paths.length - 3} 个路径`);
-                    }
-                }
-            });
+            // 标记哪些版本比本地版本更新
+            this._markNewerRevisions();
             
             // 更新界面
             this._log('更新日志列表界面');
-            this._updateLogList();
+            this._updateLogList(isLoadingMore);
             
-            // 更新目标路径名称
-            const targetName = path.basename(this._targetPath);
-            this._panel.webview.postMessage({
-                command: 'updateTargetName',
-                targetName: targetName
-            });
-            
-            // 更新目标路径
-            this._panel.webview.postMessage({
-                command: 'updateTargetPath',
-                targetPath: this._targetPath.replace(/\\/g, '\\\\')
-            });
-            
-            // 更新isDirectory状态
-            const isDirectory = fs.lstatSync(this._targetPath).isDirectory();
-            this._panel.webview.postMessage({
-                command: 'updateIsDirectory',
-                isDirectory: isDirectory
-            });
-            
-            // 更新SVN相对路径
-            this._panel.webview.postMessage({
-                command: 'updateSvnRelativePath',
-                targetSvnRelativePath: isDirectory ? this._targetSvnRelativePath : ''
-            });
+            // 只有在初始加载时才更新界面其他部分
+            if (this._isInitialLoad) {
+                // 更新目标路径名称
+                const targetName = path.basename(this._targetPath);
+                this._panel.webview.postMessage({
+                    command: 'updateTargetName',
+                    targetName: targetName
+                });
+                
+                // 更新目标路径
+                this._panel.webview.postMessage({
+                    command: 'updateTargetPath',
+                    targetPath: this._targetPath.replace(/\\/g, '\\\\')
+                });
+                
+                // 更新isDirectory状态
+                const isDirectory = fs.lstatSync(this._targetPath).isDirectory();
+                this._panel.webview.postMessage({
+                    command: 'updateIsDirectory',
+                    isDirectory: isDirectory
+                });
+                
+                // 更新SVN相对路径
+                this._panel.webview.postMessage({
+                    command: 'updateSvnRelativePath',
+                    targetSvnRelativePath: isDirectory ? this._targetSvnRelativePath : ''
+                });
+                
+                this._isInitialLoad = false;
+            }
             
             // 隐藏加载状态
             this._panel.webview.postMessage({ command: 'setLoading', value: false });
@@ -216,6 +244,66 @@ export class SvnLogPanel {
             this._log(`获取SVN日志失败: ${error.message}`);
             vscode.window.showErrorMessage(`获取SVN日志失败: ${error.message}`);
             this._panel.webview.postMessage({ command: 'setLoading', value: false });
+        }
+    }
+
+    /**
+     * 获取当前文件或目录的本地修订版本号
+     */
+    private async _getLocalRevision() {
+        try {
+            this._log('获取本地修订版本号');
+            
+            // 使用SVN info命令获取当前文件/目录的版本信息
+            const infoCommand = `info --xml "${this._targetPath}"`;
+            this._log(`执行SVN命令: ${infoCommand}`);
+            
+            const infoXml = await this.svnService.executeSvnCommand(infoCommand, path.dirname(this._targetPath), false);
+            
+            // 从XML中提取版本号
+            const revisionMatch = /<commit\s+revision="([^"]+)">/.exec(infoXml) || 
+                                  /<entry\s+[^>]*?revision="([^"]+)"/.exec(infoXml);
+            
+            if (revisionMatch && revisionMatch[1]) {
+                this._localRevision = revisionMatch[1];
+                this._log(`获取到本地修订版本号: ${this._localRevision}`);
+                
+                // 通知前端更新本地版本号显示
+                this._panel.webview.postMessage({
+                    command: 'updateLocalRevision',
+                    localRevision: this._localRevision
+                });
+            } else {
+                this._log('未能从XML中提取版本号');
+                this._localRevision = null;
+            }
+        } catch (error: any) {
+            this._log(`获取本地修订版本号失败: ${error.message}`);
+            this._localRevision = null;
+        }
+    }
+
+    /**
+     * 标记哪些版本比本地版本更新
+     */
+    private _markNewerRevisions() {
+        if (!this._localRevision) {
+            this._log('没有本地版本号信息，无法标记更新版本');
+            return;
+        }
+        
+        const localRevisionNum = parseInt(this._localRevision);
+        this._log(`标记比本地版本(${localRevisionNum})更新的版本`);
+        
+        for (const entry of this._logEntries) {
+            const revisionNum = parseInt(entry.revision);
+            // 在SVN中，版本号更大表示更新的版本
+            // 如果日志条目的版本号大于本地版本号，表示本地尚未更新到此版本
+            entry.isNewerThanLocal = revisionNum > localRevisionNum;
+            
+            if (entry.isNewerThanLocal) {
+                this._log(`标记版本 ${entry.revision} 为本地尚未更新的版本`);
+            }
         }
     }
 
@@ -354,23 +442,26 @@ export class SvnLogPanel {
     /**
      * 更新日志列表
      */
-    private _updateLogList() {
+    private _updateLogList(isLoadingMore: boolean = false) {
         this._log('发送更新日志列表消息到Webview');
         
         // 检查目标路径是否是文件夹
         const isDirectory = fs.lstatSync(this._targetPath).isDirectory();
         
-        // 发送日志条目到Webview
+        // 发送日志条目到Webview，包含isLoadingMore标记
         this._panel.webview.postMessage({
             command: 'updateLogList',
             logEntries: this._logEntries,
             selectedRevision: this._selectedRevision,
             targetSvnRelativePath: isDirectory ? this._targetSvnRelativePath : '',
-            isDirectory: isDirectory
+            isDirectory: isDirectory,
+            isLoadingMore: isLoadingMore, // 标记是否为加载更多操作
+            hasMoreLogs: this._minLoadedRevision !== '1' // 如果最小版本号不是1，说明还有更多日志可加载
         });
 
         // 如果有日志条目，且没有选中的修订版本，自动选择第一个
-        if (this._logEntries.length > 0 && !this._selectedRevision) {
+        // 注意：只在非"加载更多"模式下执行此操作
+        if (this._logEntries.length > 0 && !this._selectedRevision && !isLoadingMore) {
             const firstRevision = this._logEntries[0].revision;
             this._log(`自动选择第一个日志条目，修订版本: ${firstRevision}`);
             this._showRevisionDetails(firstRevision);
@@ -510,14 +601,19 @@ export class SvnLogPanel {
                         await this._showRevisionDetails(message.revision);
                         break;
                     case 'loadMoreLogs':
-                        this._log(`加载更多日志，限制: ${message.limit || 50}`);
-                        await this._loadLogs(message.limit || 50);
+                        this._log(`加载更多日志，限制: ${message.limit || 50}，最小已加载版本: ${this._minLoadedRevision || '无'}`);
+                        await this._loadLogs(message.limit || 50, true); // 传入true表示加载更多模式
                         break;
                     case 'refresh':
                         this._log('刷新日志');
+                        // 重置最小版本号和初始加载标记
+                        this._minLoadedRevision = null;
+                        this._isInitialLoad = true;
+                        // 重置本地版本号，确保刷新时获取最新版本
+                        this._localRevision = null;
                         // 重新获取SVN相对路径
                         await this._getSvnRelativePath();
-                        // 加载日志
+                        // 加载日志（非加载更多模式）
                         await this._loadLogs();
                         break;
                     case 'viewFileDiff':
@@ -548,6 +644,18 @@ export class SvnLogPanel {
                     case 'updateTargetPath':
                         this._log('更新目标路径: ' + message.targetPath);
                         this._targetPath = message.targetPath;
+                        break;
+                    case 'updateLocalRevision':
+                        this._localRevision = message.localRevision;
+                        this._log('更新本地修订版本号: ' + this._localRevision);
+                        
+                        // 更新界面显示
+                        if (this._localRevision) {
+                            const localRevisionNumber = document.getElementById('localRevisionNumber');
+                            if (localRevisionNumber) {
+                                localRevisionNumber.textContent = this._localRevision;
+                            }
+                        }
                         break;
                 }
             },
@@ -860,10 +968,12 @@ export class SvnLogPanel {
                 }
                 .log-entry {
                     padding: 10px;
+                    padding-left: 15px; /* 增加左侧padding */
                     margin-bottom: 10px;
                     border: 1px solid var(--vscode-panel-border);
                     border-radius: 4px;
                     cursor: pointer;
+                    position: relative; /* 添加相对定位，用于放置新标记 */
                 }
                 .log-entry:hover {
                     background-color: var(--vscode-list-hoverBackground);
@@ -871,6 +981,22 @@ export class SvnLogPanel {
                 .log-entry.selected {
                     background-color: var(--vscode-list-activeSelectionBackground);
                     color: var(--vscode-list-activeSelectionForeground);
+                }
+                .log-entry.newer-than-local {
+                    border-left: 4px solid #ff9800; /* 保留左侧橙色边框标记 */
+                }
+                .local-revision-info {
+                    margin: 10px;
+                    padding: 5px 10px;
+                    background-color: var(--vscode-editor-infoForeground, rgba(100, 200, 255, 0.1));
+                    border-left: 4px solid var(--vscode-notificationsInfoIcon-foreground, #75beff);
+                    border-radius: 3px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                .local-revision-label {
+                    font-weight: bold;
                 }
                 .log-header {
                     display: flex;
@@ -1145,6 +1271,17 @@ export class SvnLogPanel {
                 </div>
             </div>
             
+            <!-- 本地版本信息 -->
+            <div class="local-revision-info" id="localRevisionInfo" style="display: none;">
+                <div>
+                    <span class="local-revision-label">本地修订版本:</span>
+                    <span id="localRevisionNumber">--</span>
+                </div>
+                <div>
+                    <span>橙色边框表示该版本尚未更新到本地</span>
+                </div>
+            </div>
+            
             <!-- 日志筛选表单 -->
             <div class="filter-form">
                 <div class="filter-mode-toggle">
@@ -1212,6 +1349,8 @@ export class SvnLogPanel {
                     const logDetails = document.getElementById('logDetails');
                     const loading = document.getElementById('loading');
                     const refreshButton = document.getElementById('refreshButton');
+                    const localRevisionInfo = document.getElementById('localRevisionInfo');
+                    const localRevisionNumber = document.getElementById('localRevisionNumber');
                     
                     // 筛选表单元素
                     const revisionFilter = document.getElementById('revisionFilter');
@@ -1281,6 +1420,9 @@ export class SvnLogPanel {
                     
                     debugLog('Webview脚本已初始化');
                     debugLog('目标路径: ' + targetPath + ', 是否为目录: ' + isDirectory);
+                    
+                    // 存储本地修订版本号
+                    let localRevision = null;
                     
                     // 初始化
                     window.addEventListener('message', event => {
@@ -1379,6 +1521,18 @@ export class SvnLogPanel {
                                     filterResult.style.color = 'var(--vscode-descriptionForeground)';
                                 }
                                 break;
+                            case 'updateLocalRevision':
+                                localRevision = message.localRevision;
+                                debugLog('更新本地修订版本号: ' + localRevision);
+                                
+                                // 更新界面显示
+                                if (localRevision) {
+                                    localRevisionNumber.textContent = localRevision;
+                                    localRevisionInfo.style.display = 'flex';
+                                } else {
+                                    localRevisionInfo.style.display = 'none';
+                                }
+                                break;
                         }
                     });
                     
@@ -1399,14 +1553,20 @@ export class SvnLogPanel {
                         
                         entries.forEach(entry => {
                             const isSelected = entry.revision === selectedRevision;
+                            const isNewerThanLocal = entry.isNewerThanLocal;
                             const messagePreview = entry.message.length > 100 
                                 ? entry.message.substring(0, 100) + '...' 
                                 : entry.message;
                             
+                            // 为版本号旁边的标记定义新样式
+                            const inlineNewerBadge = isNewerThanLocal ? 
+                                '<span style="display: inline-block; background-color: #ff9800; color: white; font-size: 0.8em; padding: 1px 5px; border-radius: 3px; margin-left: 5px; vertical-align: middle;">未更新</span>' : 
+                                '';
+                            
                             html += \`
-                                <div class="log-entry \${isSelected ? 'selected' : ''}" data-revision="\${entry.revision}">
+                                <div class="log-entry \${isSelected ? 'selected' : ''} \${isNewerThanLocal ? 'newer-than-local' : ''}" data-revision="\${entry.revision}">
                                     <div class="log-header">
-                                        <span class="log-revision">修订版本 \${entry.revision}</span>
+                                        <span class="log-revision">修订版本 \${entry.revision} \${inlineNewerBadge}</span>
                                         <span class="log-author">\${entry.author}</span>
                                     </div>
                                     <div class="log-date">\${entry.date}</div>
@@ -1484,7 +1644,14 @@ export class SvnLogPanel {
                         // 创建详情内容容器
                         let html = \`<div class="detail-content-container">\`;
                         
-                        // 添加详情头部
+                        // 添加详情头部，包含版本对比信息
+                        const isNewerThanLocal = details.isNewerThanLocal;
+                        const versionCompareInfo = localRevision && details.revision ? 
+                            (isNewerThanLocal ? 
+                                \`<span style="color: #ff9800; font-weight: bold;">此版本 (r\${details.revision}) 尚未更新到本地 (r\${localRevision})</span>\` : 
+                                \`<span>此版本 (r\${details.revision}) 已包含在本地版本 (r\${localRevision}) 中</span>\`) : 
+                            '';
+                        
                         html += \`
                             <div class="detail-header">
                                 <div class="detail-title">修订版本 \${details.revision}</div>
@@ -1492,6 +1659,7 @@ export class SvnLogPanel {
                                     <span>作者: \${details.author}</span>
                                     <span>日期: \${details.date}</span>
                                 </div>
+                                \${versionCompareInfo ? \`<div style="margin-top: 5px;">\${versionCompareInfo}</div>\` : ''}
                             </div>
                             <div class="detail-message">\${details.message}</div>
                         \`;
@@ -1917,6 +2085,11 @@ export class SvnLogPanel {
             // 显示加载中状态
             this._panel.webview.postMessage({ command: 'setLoading', value: true });
             
+            // 如果本地版本号未获取，先获取它
+            if (this._localRevision === null) {
+                await this._getLocalRevision();
+            }
+            
             // 构建SVN命令参数
             let commandArgs = '';
             
@@ -2002,6 +2175,9 @@ export class SvnLogPanel {
                 this._logEntries = filteredEntries;
             }
             
+            // 标记哪些版本比本地版本更新
+            this._markNewerRevisions();
+            
             // 更新界面
             this._updateLogList();
             
@@ -2055,5 +2231,41 @@ export class SvnLogPanel {
         
         // 释放输出通道
         this._outputChannel.dispose();
+    }
+
+    // 添加新方法，用于更新日志条目数组并记录最小版本号
+    private _updateLogEntries(newEntries: SvnLogEntry[], isLoadingMore: boolean) {
+        if (newEntries.length === 0) {
+            this._log('没有获取到新的日志条目');
+            return;
+        }
+        
+        // 如果是加载更多，将新条目追加到现有条目后
+        if (isLoadingMore) {
+            this._logEntries = [...this._logEntries, ...newEntries];
+        } else {
+            // 否则替换现有条目
+            this._logEntries = newEntries;
+        }
+        
+        // 记录最小版本号
+        if (this._logEntries.length > 0) {
+            const minRevision = Math.min(...this._logEntries.map(entry => parseInt(entry.revision)));
+            this._minLoadedRevision = minRevision.toString();
+            this._log(`更新已加载的最小版本号: ${this._minLoadedRevision}`);
+        }
+        
+        // 记录日志条目的路径信息（仅记录新增的条目）
+        newEntries.forEach((entry, index) => {
+            this._log(`日志条目 #${index + 1}, 修订版本: ${entry.revision}, 路径数量: ${entry.paths?.length || 0}`);
+            if (entry.paths && entry.paths.length > 0) {
+                entry.paths.slice(0, 3).forEach((path, pathIndex) => {
+                    this._log(`  - 路径 #${pathIndex + 1}: 操作=${path.action}, 路径=${path.path}`);
+                });
+                if (entry.paths.length > 3) {
+                    this._log(`  - ... 还有 ${entry.paths.length - 3} 个路径`);
+                }
+            }
+        });
     }
 }

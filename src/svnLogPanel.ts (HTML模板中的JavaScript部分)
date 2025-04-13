@@ -1,0 +1,106 @@
+// 在window.addEventListener('message', event => { ... })中的case 'updateLogList'部分进行修改：
+
+case 'updateLogList':
+    // 检查是否是加载更多操作
+    const isLoadingMore = message.isLoadingMore === true;
+    debugLog('收到日志列表更新，加载更多模式: ' + isLoadingMore + ', 条目数: ' + message.logEntries.length);
+    
+    if (isLoadingMore) {
+        // 追加新加载的日志条目到现有条目后
+        logEntries = [...logEntries, ...message.logEntries];
+        debugLog('追加日志条目，当前总数: ' + logEntries.length);
+    } else {
+        // 首次加载或刷新操作，替换所有条目
+        logEntries = message.logEntries;
+        debugLog('替换日志条目，新条目数: ' + logEntries.length);
+    }
+    
+    // 更新是否有更多日志的标记
+    const hasMoreLogs = message.hasMoreLogs !== false;
+    
+    // 更新isDirectory状态
+    if (message.hasOwnProperty('isDirectory')) {
+        isDirectory = message.isDirectory;
+        debugLog('更新isDirectory: ' + isDirectory);
+    }
+    
+    // 更新SVN相对路径
+    if (message.targetSvnRelativePath) {
+        targetSvnRelativePath = message.targetSvnRelativePath;
+        debugLog('更新SVN相对路径: ' + targetSvnRelativePath);
+    }
+    
+    // 如果有选中的修订版本，使用它
+    if (message.selectedRevision) {
+        selectedRevision = message.selectedRevision;
+        debugLog('使用服务器提供的选中修订版本: ' + selectedRevision);
+    } else if (logEntries.length > 0 && !selectedRevision && !isLoadingMore) {
+        // 否则，如果有日志条目，且没有选中的版本，默认选择第一个
+        // 注意：只在非"加载更多"模式下执行此操作
+        selectedRevision = logEntries[0].revision;
+        debugLog('默认选择第一个修订版本: ' + selectedRevision);
+        
+        // 自动触发选择第一个日志条目
+        vscode.postMessage({
+            command: 'selectRevision',
+            revision: selectedRevision
+        });
+    }
+    
+    renderLogList(logEntries, hasMoreLogs);
+    break;
+
+// 修改renderLogList函数，添加hasMoreLogs参数
+function renderLogList(entries, hasMoreLogs = true) {
+    debugLog('渲染日志列表，条目数: ' + entries.length + ', 是否有更多: ' + hasMoreLogs);
+    if (!entries || entries.length === 0) {
+        logList.innerHTML = `
+            <div class="empty-state">
+                <div class="empty-icon">📋</div>
+                <div>没有找到日志记录</div>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = '';
+    
+    entries.forEach(entry => {
+        const isSelected = entry.revision === selectedRevision;
+        const messagePreview = entry.message.length > 100 
+            ? entry.message.substring(0, 100) + '...' 
+            : entry.message;
+        
+        html += `
+            <div class="log-entry ${isSelected ? 'selected' : ''}" data-revision="${entry.revision}">
+                <div class="log-header">
+                    <span class="log-revision">修订版本 ${entry.revision}</span>
+                    <span class="log-author">${entry.author}</span>
+                </div>
+                <div class="log-date">${entry.date}</div>
+                <div class="log-message">${messagePreview}</div>
+            </div>
+        `;
+    });
+    
+    // 只有当还有更多日志可加载时，才显示"加载更多"按钮
+    if (hasMoreLogs) {
+        html += `
+            <div class="load-more">
+                <button id="loadMoreButton">加载更多</button>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="load-more">
+                <div class="no-more-logs">已加载全部日志</div>
+            </div>
+        `;
+    }
+    
+    logList.innerHTML = html;
+    debugLog('日志列表渲染完成');
+    
+    // 添加点击事件
+    // ... 现有代码保持不变 ...
+} 
