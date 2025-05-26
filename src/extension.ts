@@ -6,11 +6,13 @@ import { SvnUpdatePanel } from './updatePanel';
 import { CommitLogStorage } from './commitLogStorage';
 import { SvnFolderCommitPanel } from './folderCommitPanel';
 import { SvnLogPanel } from './svnLogPanel';
+import { SvnFilterService } from './filterService';
 
 // SVN服务实例
 let svnService: SvnService;
 let diffProvider: SvnDiffProvider;
 let logStorage: CommitLogStorage;
+let filterService: SvnFilterService;
 
 /**
  * 上传文件到SVN
@@ -518,6 +520,112 @@ async function showLocalRevision(fsPath: string): Promise<void> {
   }
 }
 
+/**
+ * 配置过滤规则
+ */
+async function configureFilter(): Promise<void> {
+  try {
+    const config = filterService.getExcludeConfig();
+    
+    // 显示配置选项
+    const option = await vscode.window.showQuickPick([
+      '配置排除文件模式',
+      '配置排除文件夹',
+      '查看当前配置',
+      '重置为默认配置'
+    ], {
+      placeHolder: '选择要配置的选项'
+    });
+    
+    if (!option) {
+      return;
+    }
+    
+    switch (option) {
+      case '配置排除文件模式':
+        await configureExcludeFiles();
+        break;
+      case '配置排除文件夹':
+        await configureExcludeFolders();
+        break;
+      case '查看当前配置':
+        filterService.showExcludeInfo();
+        break;
+      case '重置为默认配置':
+        await resetFilterConfig();
+        break;
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`配置过滤规则失败: ${error.message}`);
+  }
+}
+
+/**
+ * 配置排除文件模式
+ */
+async function configureExcludeFiles(): Promise<void> {
+  const config = filterService.getExcludeConfig();
+  const currentFiles = config.files.join(', ');
+  
+  const input = await vscode.window.showInputBox({
+    prompt: '输入要排除的文件模式（支持glob模式，用逗号分隔）',
+    value: currentFiles,
+    placeHolder: '例如: *.log, *.tmp, node_modules, .DS_Store'
+  });
+  
+  if (input !== undefined) {
+    const files = input.split(',').map(f => f.trim()).filter(f => f.length > 0);
+    await filterService.updateExcludeConfig(files, config.folders);
+    vscode.window.showInformationMessage('文件排除模式已更新');
+  }
+}
+
+/**
+ * 配置排除文件夹
+ */
+async function configureExcludeFolders(): Promise<void> {
+  const config = filterService.getExcludeConfig();
+  const currentFolders = config.folders.join(', ');
+  
+  const input = await vscode.window.showInputBox({
+    prompt: '输入要排除的文件夹名称（用逗号分隔）',
+    value: currentFolders,
+    placeHolder: '例如: node_modules, .git, .vscode, dist, build'
+  });
+  
+  if (input !== undefined) {
+    const folders = input.split(',').map(f => f.trim()).filter(f => f.length > 0);
+    await filterService.updateExcludeConfig(config.files, folders);
+    vscode.window.showInformationMessage('文件夹排除列表已更新');
+  }
+}
+
+/**
+ * 重置过滤配置为默认值
+ */
+async function resetFilterConfig(): Promise<void> {
+  const confirm = await vscode.window.showWarningMessage(
+    '确定要重置过滤配置为默认值吗？',
+    '确定',
+    '取消'
+  );
+  
+  if (confirm === '确定') {
+    const defaultFiles = ['*.log', '*.tmp', 'node_modules', '.DS_Store', 'Thumbs.db'];
+    const defaultFolders = ['node_modules', '.git', '.vscode', 'dist', 'build', 'out', 'target'];
+    
+    await filterService.updateExcludeConfig(defaultFiles, defaultFolders);
+    vscode.window.showInformationMessage('过滤配置已重置为默认值');
+  }
+}
+
+/**
+ * 显示过滤信息
+ */
+async function showFilterInfo(): Promise<void> {
+  filterService.showExcludeInfo();
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -525,6 +633,7 @@ export function activate(context: vscode.ExtensionContext) {
   svnService = new SvnService();
   diffProvider = new SvnDiffProvider(svnService);
   logStorage = new CommitLogStorage(context);
+  filterService = new SvnFilterService();
   
   // 注册上传文件命令
   const uploadFileCommand = vscode.commands.registerCommand('vscode-svn.uploadFile', async (fileUri?: vscode.Uri) => {
@@ -720,6 +829,16 @@ export function activate(context: vscode.ExtensionContext) {
     await showLocalRevision(fileUri.fsPath);
   });
   
+  // 注册配置过滤规则命令
+  const configureFilterCommand = vscode.commands.registerCommand('vscode-svn.configureFilter', async () => {
+    await configureFilter();
+  });
+  
+  // 注册显示过滤信息命令
+  const showFilterInfoCommand = vscode.commands.registerCommand('vscode-svn.showFilterInfo', async () => {
+    await showFilterInfo();
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -731,7 +850,9 @@ export function activate(context: vscode.ExtensionContext) {
     updateWorkspaceCommand,
     revertFileCommand,
     viewLogCommand,
-    showLocalRevisionCommand
+    showLocalRevisionCommand,
+    configureFilterCommand,
+    showFilterInfoCommand
   );
 }
 

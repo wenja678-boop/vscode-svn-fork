@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { SvnService } from './svnService';
 import { SvnDiffProvider } from './diffProvider';
 import { CommitLogStorage } from './commitLogStorage';
+import { SvnFilterService } from './filterService';
 import * as path from 'path';
 import { AiService } from './aiService';
 
@@ -19,6 +20,8 @@ export class SvnFolderCommitPanel {
     private _fileStatuses: FileStatus[] = [];
     private readonly aiService: AiService;
     private outputChannel: vscode.OutputChannel;
+    private readonly filterService: SvnFilterService;
+    private _filterStats: { totalFiles: number, filteredFiles: number, excludedFiles: number } = { totalFiles: 0, filteredFiles: 0, excludedFiles: 0 };
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -30,6 +33,7 @@ export class SvnFolderCommitPanel {
     ) {
         this._panel = panel;
         this.aiService = new AiService();
+        this.filterService = new SvnFilterService();
         this._update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -84,13 +88,18 @@ export class SvnFolderCommitPanel {
         webview.html = this._getHtmlForWebview();
     }
 
+    private _getFilterInfo(): { totalFiles: number, filteredFiles: number, excludedFiles: number } {
+        return this._filterStats;
+    }
+
     private async _updateFileStatuses() {
         try {
             // 使用原生格式获取状态
             const statusResult = await this.svnService.executeSvnCommand('status', this.folderPath, false);
             console.log('SVN status result:', statusResult);
 
-            this._fileStatuses = statusResult
+            // 首先处理所有文件状态
+            const allFileStatuses = statusResult
                 .split('\n')
                 .map(line => line.trim())
                 .filter(line => line && !line.startsWith('>'))  // 过滤空行和树冲突的详细信息
@@ -135,7 +144,31 @@ export class SvnFolderCommitPanel {
                     };
                 });
 
-            console.log('Processed file statuses:', this._fileStatuses);
+            // 应用过滤器排除不需要的文件
+            const filteredFileStatuses = allFileStatuses.filter(fileStatus => {
+                // 检查文件是否应该被排除
+                const shouldExclude = this.filterService.shouldExcludeFile(fileStatus.path, this.folderPath);
+                if (shouldExclude) {
+                    console.log(`文件被过滤器排除: ${fileStatus.displayName}`);
+                }
+                return !shouldExclude;
+            });
+
+            // 记录过滤结果
+            const excludedCount = allFileStatuses.length - filteredFileStatuses.length;
+            this._filterStats = {
+                totalFiles: allFileStatuses.length,
+                filteredFiles: filteredFileStatuses.length,
+                excludedFiles: excludedCount
+            };
+            
+            if (excludedCount > 0) {
+                console.log(`过滤器排除了 ${excludedCount} 个文件`);
+                this.outputChannel.appendLine(`过滤器排除了 ${excludedCount} 个文件，显示 ${filteredFileStatuses.length} 个文件`);
+            }
+
+            this._fileStatuses = filteredFileStatuses;
+            console.log('Processed and filtered file statuses:', this._fileStatuses);
         } catch (error) {
             console.error('Error updating file statuses:', error);
             vscode.window.showErrorMessage(`更新文件状态失败: ${error}`);
@@ -420,6 +453,20 @@ export class SvnFolderCommitPanel {
             margin-right: 15px;
             user-select: none;
         }
+        .filter-info {
+            margin-top: 8px;
+            padding: 4px 8px;
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 3px;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+        .filter-info.has-excluded {
+            background-color: var(--vscode-inputValidation-warningBackground);
+            border-color: var(--vscode-inputValidation-warningBorder);
+            color: var(--vscode-inputValidation-warningForeground);
+        }
         .file-list-container {
             flex: 1;
             overflow: auto;
@@ -636,6 +683,7 @@ export class SvnFolderCommitPanel {
             <select id="extensionFilter" multiple>
             </select>
         </div>
+        ${this._renderFilterInfo()}
     </div>
 
     <div class="file-list-container">
@@ -1045,6 +1093,26 @@ export class SvnFolderCommitPanel {
         return prefixes.map(prefix => 
             `<option value="${prefix}">${prefix}</option>`
         ).join('');
+    }
+
+    private _renderFilterInfo(): string {
+        const filterInfo = this._getFilterInfo();
+        const hasExcluded = filterInfo.excludedFiles > 0;
+        const cssClass = hasExcluded ? 'filter-info has-excluded' : 'filter-info';
+        
+        if (filterInfo.totalFiles === 0) {
+            return `<div class="${cssClass}">📁 没有检测到文件变更</div>`;
+        }
+        
+        if (hasExcluded) {
+            return `<div class="${cssClass}">
+                🔍 文件统计: 总共 ${filterInfo.totalFiles} 个文件，显示 ${filterInfo.filteredFiles} 个，
+                <strong>排除了 ${filterInfo.excludedFiles} 个文件</strong>
+                <br>💡 被排除的文件不会显示在列表中，也不会被提交到SVN
+            </div>`;
+        } else {
+            return `<div class="${cssClass}">📊 显示 ${filterInfo.filteredFiles} 个文件</div>`;
+        }
     }
 
     private _getHtmlForDiffView(filePath: string, diff: string): string {

@@ -13,5 +13,11 @@ vsc-extension-quickstart.md
 node_modules/**
 !node_modules/@xmldom
 !node_modules/@xmldom/**
+!node_modules/minimatch
+!node_modules/minimatch/**
+!node_modules/brace-expansion
+!node_modules/brace-expansion/**
+!node_modules/balanced-match
+!node_modules/balanced-match/**
 .git/**
 **/*.vsix 

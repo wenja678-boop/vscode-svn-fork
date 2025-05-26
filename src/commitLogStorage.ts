@@ -40,17 +40,12 @@ export class CommitLogStorage {
   }
 
   /**
-   * 获取前缀存储路径
+   * 获取前缀存储路径 - 使用全局存储，以用户/本机为单位
    */
   private getPrefixStoragePath(): string {
-    let workspaceRoot = '';
-    if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
-      workspaceRoot = vscode.workspace.workspaceFolders[0].uri.fsPath;
-    } else {
-      workspaceRoot = this.context.globalStoragePath;
-    }
-    
-    return path.join(workspaceRoot, '.svn-logs', 'prefix_history.json');
+    // 使用扩展的全局存储路径，这样所有项目都能共享前缀历史
+    const globalStoragePath = this.context.globalStorageUri?.fsPath || this.context.globalStoragePath;
+    return path.join(globalStoragePath, 'svn_prefix_history.json');
   }
 
   /**

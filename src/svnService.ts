@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import { promisify } from 'util';
+import { SvnFilterService } from './filterService';
 
 const exec = promisify(cp.exec);
 const fsExists = promisify(fs.exists);
@@ -14,9 +15,11 @@ export class SvnService {
   // 存储自定义SVN工作副本路径
   private customSvnRoot: string | undefined;
   private outputChannel: vscode.OutputChannel;
+  private filterService: SvnFilterService;
 
   constructor() {
     this.outputChannel = vscode.window.createOutputChannel('SVN命令诊断');
+    this.filterService = new SvnFilterService();
   }
 
   /**
@@ -303,6 +306,12 @@ export class SvnService {
    * @param filePath 文件路径
    */
   public async addFile(filePath: string): Promise<void> {
+    // 检查文件是否应该被排除
+    if (this.filterService.shouldExcludeFile(filePath)) {
+      vscode.window.showWarningMessage(`文件 ${path.basename(filePath)} 在排除列表中，已跳过添加`);
+      return;
+    }
+    
     let cwd = path.dirname(filePath);
     let fileName = path.basename(filePath);
     
@@ -346,6 +355,14 @@ export class SvnService {
     this.showOutputChannel('SVN提交操作');
     this.outputChannel.appendLine(`提交路径: ${fsPath}`);
     this.outputChannel.appendLine(`提交信息: ${message}`);
+    
+    // 检查文件是否应该被排除
+    if (this.filterService.shouldExcludeFile(fsPath)) {
+      this.outputChannel.appendLine(`文件 ${fsPath} 被过滤器排除，跳过提交操作`);
+      this.outputChannel.appendLine('========== SVN提交操作跳过 ==========');
+      vscode.window.showWarningMessage(`文件 ${path.basename(fsPath)} 在排除列表中，已跳过提交`);
+      return;
+    }
     
     try {
       const isDirectory = (await vscode.workspace.fs.stat(vscode.Uri.file(fsPath))).type === vscode.FileType.Directory;
@@ -408,6 +425,16 @@ export class SvnService {
     // 使用公共方法显示输出面板
     this.showOutputChannel('SVN更新操作');
     this.outputChannel.appendLine(`更新路径: ${fsPath}`);
+    
+    // 检查文件或文件夹是否应该被排除
+    const isDirectory = (await vscode.workspace.fs.stat(vscode.Uri.file(fsPath))).type === vscode.FileType.Directory;
+    if ((isDirectory && this.filterService.shouldExcludeFolder(fsPath)) || 
+        (!isDirectory && this.filterService.shouldExcludeFile(fsPath))) {
+      this.outputChannel.appendLine(`路径 ${fsPath} 被过滤器排除，跳过更新操作`);
+      this.outputChannel.appendLine('========== SVN更新操作跳过 ==========');
+      vscode.window.showWarningMessage(`${isDirectory ? '文件夹' : '文件'} ${path.basename(fsPath)} 在排除列表中，已跳过更新`);
+      return;
+    }
     
     try {
       // 如果有自定义SVN根目录，检查是否需要使用它
@@ -519,15 +546,28 @@ export class SvnService {
     this.showOutputChannel('SVN批量提交操作');
     this.outputChannel.appendLine(`基础路径: ${basePath}`);
     this.outputChannel.appendLine(`提交信息: ${message}`);
-    this.outputChannel.appendLine(`文件数量: ${files.length}`);
-    this.outputChannel.appendLine('文件列表:');
-    files.forEach((file, index) => {
+    this.outputChannel.appendLine(`原始文件数量: ${files.length}`);
+    
+    // 应用过滤器
+    const filteredFiles = this.filterService.filterFiles(files, basePath);
+    const excludedFiles = files.filter(file => !filteredFiles.includes(file));
+    
+    this.outputChannel.appendLine(`过滤后文件数量: ${filteredFiles.length}`);
+    if (excludedFiles.length > 0) {
+      this.outputChannel.appendLine('被排除的文件:');
+      excludedFiles.forEach((file, index) => {
+        this.outputChannel.appendLine(`  ${index + 1}. ${file} (已排除)`);
+      });
+    }
+    
+    this.outputChannel.appendLine('要提交的文件列表:');
+    filteredFiles.forEach((file, index) => {
       this.outputChannel.appendLine(`  ${index + 1}. ${file}`);
     });
     
     try {
-      if (files.length === 0) {
-        throw new Error('没有选择要提交的文件');
+      if (filteredFiles.length === 0) {
+        throw new Error('没有可提交的文件（所有文件都被过滤器排除）');
       }
       
       // 检查是否使用自定义SVN根目录
@@ -545,7 +585,7 @@ export class SvnService {
           this.outputChannel.appendLine('正在处理文件路径...');
           
           // 构建相对路径参数
-          fileArgs = files.map(file => {
+          fileArgs = filteredFiles.map(file => {
             const relativePath = path.relative(this.getCustomSvnRoot()!, file);
             if (relativePath.startsWith('..')) {
               throw new Error(`文件 ${file} 不在SVN工作副本中`);
@@ -561,7 +601,7 @@ export class SvnService {
         this.outputChannel.appendLine('正在处理文件路径...');
         
         // 构建文件参数
-        fileArgs = files.map(file => {
+        fileArgs = filteredFiles.map(file => {
           // 如果文件在基础路径下，使用相对路径
           if (file.startsWith(workingDir)) {
             const relativePath = path.relative(workingDir, file);
