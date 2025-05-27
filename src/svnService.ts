@@ -333,6 +333,31 @@ export class SvnService {
   }
 
   /**
+   * 标记文件为删除状态（用于处理missing文件）
+   * @param filePath 文件路径
+   */
+  public async removeFile(filePath: string): Promise<void> {
+    let cwd = path.dirname(filePath);
+    let fileName = path.basename(filePath);
+    
+    // 如果有自定义SVN根目录，检查是否需要使用它
+    if (this.getCustomSvnRoot()) {
+      try {
+        await this.executeSvnCommand(`info "${fileName}"`, cwd);
+      } catch (error) {
+        // 如果直接检查失败，使用自定义根目录
+        const relativePath = path.relative(this.getCustomSvnRoot()!, filePath);
+        if (!relativePath.startsWith('..')) {
+          cwd = this.getCustomSvnRoot()!;
+          fileName = relativePath;
+        }
+      }
+    }
+    
+    await this.executeSvnCommand(`remove "${fileName}"`, cwd);
+  }
+
+  /**
    * 确保输出面板可见并为新操作做准备
    * @param title 操作标题
    * @private

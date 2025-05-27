@@ -97,6 +97,7 @@ export class SvnFolderCommitPanel {
             // 使用原生格式获取状态
             const statusResult = await this.svnService.executeSvnCommand('status', this.folderPath, false);
             console.log('SVN status result:', statusResult);
+            this.outputChannel.appendLine(`[_updateFileStatuses] SVN status 原始输出:\n${statusResult}`);
 
             // 首先处理所有文件状态
             const allFileStatuses = statusResult
@@ -106,10 +107,13 @@ export class SvnFolderCommitPanel {
                 .map(line => {
                     // SVN status 输出格式：
                     // 第一列：文件状态 (M:修改, A:新增, D:删除, ?:未版本控制, C:冲突, !:丢失等)
-                    // 第8列开始：文件路径
+                    // 后面跟着空格，然后是文件路径
                     const status = line[0];
-                    const filePath = line.substring(8).trim();
+                    // 找到第一个非空格字符后的文件路径
+                    const match = line.match(/^.\s+(.+)$/);
+                    const filePath = match ? match[1].trim() : line.substring(1).trim();
                     console.log('Processing line:', { status, filePath });
+                    this.outputChannel.appendLine(`[_updateFileStatuses] 处理行: "${line}" -> 状态: "${status}", 文件路径: "${filePath}"`);
 
                     let type: 'modified' | 'added' | 'deleted' | 'unversioned' | 'conflict' | 'missing';
                     switch (status) {
@@ -145,11 +149,15 @@ export class SvnFolderCommitPanel {
                 });
 
             // 应用过滤器排除不需要的文件
+            this.outputChannel.appendLine(`[_updateFileStatuses] 开始应用过滤器，原始文件数量: ${allFileStatuses.length}`);
             const filteredFileStatuses = allFileStatuses.filter(fileStatus => {
                 // 检查文件是否应该被排除
                 const shouldExclude = this.filterService.shouldExcludeFile(fileStatus.path, this.folderPath);
                 if (shouldExclude) {
                     console.log(`文件被过滤器排除: ${fileStatus.displayName}`);
+                    this.outputChannel.appendLine(`[_updateFileStatuses] 文件被过滤器排除: ${fileStatus.displayName} (${fileStatus.status})`);
+                } else {
+                    this.outputChannel.appendLine(`[_updateFileStatuses] 文件通过过滤器: ${fileStatus.displayName} (${fileStatus.status})`);
                 }
                 return !shouldExclude;
             });
@@ -169,6 +177,10 @@ export class SvnFolderCommitPanel {
 
             this._fileStatuses = filteredFileStatuses;
             console.log('Processed and filtered file statuses:', this._fileStatuses);
+            this.outputChannel.appendLine(`[_updateFileStatuses] 最终文件状态列表 (${this._fileStatuses.length} 个文件):`);
+            this._fileStatuses.forEach((file, index) => {
+                this.outputChannel.appendLine(`  ${index + 1}. ${file.displayName} (${file.status}) - ${file.type}`);
+            });
         } catch (error) {
             console.error('Error updating file statuses:', error);
             vscode.window.showErrorMessage(`更新文件状态失败: ${error}`);
@@ -223,10 +235,34 @@ export class SvnFolderCommitPanel {
                 }
             }
 
+            // 处理丢失的文件（missing files）- 需要先标记为删除
+            const missingFiles = files.filter(file => 
+                this._fileStatuses.find(f => f.path === file)?.type === 'missing'
+            );
+            
+            if (missingFiles.length > 0) {
+                this.outputChannel.appendLine(`标记 ${missingFiles.length} 个丢失的文件为删除状态`);
+                for (const file of missingFiles) {
+                    await this.svnService.removeFile(file);
+                }
+            }
+
             // 分离文件和目录
             const fileEntries = await Promise.all(files.map(async file => {
-                const isDirectory = (await vscode.workspace.fs.stat(vscode.Uri.file(file))).type === vscode.FileType.Directory;
-                return { path: file, isDirectory };
+                // 检查文件是否是missing状态
+                const fileStatus = this._fileStatuses.find(f => f.path === file);
+                if (fileStatus?.type === 'missing') {
+                    // missing文件已经不存在，视为文件（非目录）
+                    return { path: file, isDirectory: false };
+                }
+                
+                try {
+                    const isDirectory = (await vscode.workspace.fs.stat(vscode.Uri.file(file))).type === vscode.FileType.Directory;
+                    return { path: file, isDirectory };
+                } catch (error) {
+                    // 如果文件不存在，视为文件（非目录）
+                    return { path: file, isDirectory: false };
+                }
             }));
             
             const onlyFiles = fileEntries.filter(entry => !entry.isDirectory).map(entry => entry.path);
@@ -287,8 +323,8 @@ export class SvnFolderCommitPanel {
                         };
                     }
 
-                    // 对于删除的文件
-                    if (fileStatus.type === 'deleted') {
+                    // 对于删除的文件和丢失的文件
+                    if (fileStatus.type === 'deleted' || fileStatus.type === 'missing') {
                         return {
                             path: fileStatus.displayName,
                             status: fileStatus.status,
@@ -677,6 +713,10 @@ export class SvnFolderCommitPanel {
                 <input type="checkbox" id="unversioned-checkbox" checked>
                 未版本控制
             </label>
+            <label>
+                <input type="checkbox" id="missing-checkbox" checked>
+                丢失
+            </label>
         </div>
         <div class="extension-filter">
             <label class="extension-filter-label">文件后缀筛选：</label>
@@ -727,7 +767,7 @@ export class SvnFolderCommitPanel {
             // 从状态中恢复或初始化
             const previousState = vscode.getState() || { 
                 selectedFiles: [],
-                enabledTypes: ['modified', 'added', 'deleted', 'unversioned'],
+                enabledTypes: ['modified', 'added', 'deleted', 'unversioned', 'missing'],
                 selectedExtensions: []
             };
             
@@ -833,6 +873,7 @@ export class SvnFolderCommitPanel {
                 document.getElementById('added-checkbox').addEventListener('change', () => toggleFileType('added'));
                 document.getElementById('deleted-checkbox').addEventListener('change', () => toggleFileType('deleted'));
                 document.getElementById('unversioned-checkbox').addEventListener('change', () => toggleFileType('unversioned'));
+                document.getElementById('missing-checkbox').addEventListener('change', () => toggleFileType('missing'));
 
                 // 全选复选框
                 document.getElementById('selectAll').addEventListener('change', (e) => toggleAllFiles(e.target.checked));
@@ -1061,8 +1102,8 @@ export class SvnFolderCommitPanel {
                 statusClass = 'missing';
             }
 
-            // 确定是否显示恢复按钮（只在文件是已修改或已删除状态时显示）
-            const showRevertButton = file.type === 'modified' || file.type === 'deleted';
+            // 确定是否显示恢复按钮（只在文件是已修改、已删除或丢失状态时显示）
+            const showRevertButton = file.type === 'modified' || file.type === 'deleted' || file.type === 'missing';
 
             return `
                 <div class="file-item status-${statusClass}" 
