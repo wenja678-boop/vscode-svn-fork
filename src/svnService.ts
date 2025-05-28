@@ -181,7 +181,13 @@ export class SvnService {
     try {
       // 首先尝试直接使用svn info命令
       try {
-        await this.executeSvnCommand('info', fsPath);
+        // 特殊处理：如果路径包含@符号，需要在路径后添加额外的@来转义
+        let targetPath = fsPath;
+        if (fsPath.includes('@')) {
+          targetPath = `${fsPath}@`;
+        }
+        
+        await this.executeSvnCommand('info', targetPath);
         return true;
       } catch (error) {
         // 如果直接检查失败，并且有自定义SVN根目录，则使用自定义根目录
@@ -193,9 +199,15 @@ export class SvnService {
             return false;
           }
           
+          // 特殊处理：如果相对路径包含@符号，需要在路径后添加额外的@来转义
+          let escapedPath = relativePath;
+          if (relativePath.includes('@')) {
+            escapedPath = `${relativePath}@`;
+          }
+          
           // 尝试在自定义SVN根目录下执行svn info命令
           try {
-            await this.executeSvnCommand(`info "${relativePath}"`, this.getCustomSvnRoot()!);
+            await this.executeSvnCommand(`info "${escapedPath}"`, this.getCustomSvnRoot()!);
             return true;
           } catch (error) {
             return false;
@@ -220,6 +232,12 @@ export class SvnService {
       
       this.outputChannel.appendLine(`[getFileStatus] 获取文件状态: ${filePath}`);
       
+      // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+      const needsEscaping = fileName.includes('@');
+      if (needsEscaping) {
+        fileName = `${fileName}@`;
+      }
+      
       // 如果有自定义SVN根目录，并且直接检查失败，则使用自定义根目录
       if (this.getCustomSvnRoot()) {
         try {
@@ -235,6 +253,10 @@ export class SvnService {
           if (!relativePath.startsWith('..')) {
             cwd = this.getCustomSvnRoot()!;
             fileName = relativePath;
+            // 如果相对路径包含@符号，也需要转义
+            if (needsEscaping && !fileName.endsWith('@')) {
+              fileName = `${fileName}@`;
+            }
           }
         }
       }
@@ -315,16 +337,28 @@ export class SvnService {
     let cwd = path.dirname(filePath);
     let fileName = path.basename(filePath);
     
+    // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+    // 因为在SVN中@符号用于指定版本号
+    const needsEscaping = fileName.includes('@');
+    if (needsEscaping) {
+      fileName = `${fileName}@`;
+    }
+    
     // 如果有自定义SVN根目录，检查是否需要使用它
     if (this.getCustomSvnRoot()) {
       try {
-        await this.executeSvnCommand(`info "${fileName}"`, cwd);
+        const infoCommand = needsEscaping ? `info "${fileName}"` : `info "${fileName}"`;
+        await this.executeSvnCommand(infoCommand, cwd);
       } catch (error) {
         // 如果直接检查失败，使用自定义根目录
         const relativePath = path.relative(this.getCustomSvnRoot()!, filePath);
         if (!relativePath.startsWith('..')) {
           cwd = this.getCustomSvnRoot()!;
           fileName = relativePath;
+          // 如果相对路径包含@符号，也需要转义
+          if (needsEscaping && !fileName.endsWith('@')) {
+            fileName = `${fileName}@`;
+          }
         }
       }
     }
@@ -333,23 +367,35 @@ export class SvnService {
   }
 
   /**
-   * 标记文件为删除状态（用于处理missing文件）
+   * 删除文件
    * @param filePath 文件路径
    */
   public async removeFile(filePath: string): Promise<void> {
     let cwd = path.dirname(filePath);
     let fileName = path.basename(filePath);
     
+    // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+    // 因为在SVN中@符号用于指定版本号
+    const needsEscaping = fileName.includes('@');
+    if (needsEscaping) {
+      fileName = `${fileName}@`;
+    }
+    
     // 如果有自定义SVN根目录，检查是否需要使用它
     if (this.getCustomSvnRoot()) {
       try {
-        await this.executeSvnCommand(`info "${fileName}"`, cwd);
+        const infoCommand = needsEscaping ? `info "${fileName}"` : `info "${fileName}"`;
+        await this.executeSvnCommand(infoCommand, cwd);
       } catch (error) {
         // 如果直接检查失败，使用自定义根目录
         const relativePath = path.relative(this.getCustomSvnRoot()!, filePath);
         if (!relativePath.startsWith('..')) {
           cwd = this.getCustomSvnRoot()!;
           fileName = relativePath;
+          // 如果相对路径包含@符号，也需要转义
+          if (needsEscaping && !fileName.endsWith('@')) {
+            fileName = `${fileName}@`;
+          }
         }
       }
     }
@@ -406,13 +452,19 @@ export class SvnService {
             this.outputChannel.appendLine(`相对路径: ${relativePath}`);
             this.outputChannel.appendLine('正在提交文件...');
             
+            // 特殊处理：如果路径包含@符号，需要在路径后添加额外的@来转义
+            let escapedPath = relativePath;
+            if (relativePath.includes('@')) {
+              escapedPath = `${relativePath}@`;
+            }
+            
             if (isDirectory) {
-              const result = await this.executeSvnCommand(`commit "${relativePath}" -m "${message}"`, this.getCustomSvnRoot()!);
+              const result = await this.executeSvnCommand(`commit "${escapedPath}" -m "${message}"`, this.getCustomSvnRoot()!);
               this.outputChannel.appendLine(result);
               this.outputChannel.appendLine('========== SVN提交操作完成 ==========');
               return;
             } else {
-              const result = await this.executeSvnCommand(`commit "${relativePath}" -m "${message}"`, this.getCustomSvnRoot()!);
+              const result = await this.executeSvnCommand(`commit "${escapedPath}" -m "${message}"`, this.getCustomSvnRoot()!);
               this.outputChannel.appendLine(result);
               this.outputChannel.appendLine('========== SVN提交操作完成 ==========');
               return;
@@ -427,7 +479,13 @@ export class SvnService {
         this.outputChannel.appendLine(result);
       } else {
         const cwd = path.dirname(fsPath);
-        const fileName = path.basename(fsPath);
+        let fileName = path.basename(fsPath);
+        
+        // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+        if (fileName.includes('@')) {
+          fileName = `${fileName}@`;
+        }
+        
         this.outputChannel.appendLine(`工作目录: ${cwd}`);
         this.outputChannel.appendLine(`文件名: ${fileName}`);
         const result = await this.executeSvnCommand(`commit "${fileName}" -m "${message}"`, cwd);
@@ -470,9 +528,15 @@ export class SvnService {
           // 如果直接检查失败，使用自定义根目录
           const relativePath = path.relative(this.getCustomSvnRoot()!, fsPath);
           if (!relativePath.startsWith('..')) {
+            // 特殊处理：如果路径包含@符号，需要在路径后添加额外的@来转义
+            let escapedPath = relativePath;
+            if (relativePath.includes('@')) {
+              escapedPath = `${relativePath}@`;
+            }
+            
             this.outputChannel.appendLine(`使用自定义SVN根目录: ${this.getCustomSvnRoot()!}`);
-            this.outputChannel.appendLine(`相对路径: ${relativePath}`);
-            const result = await this.executeSvnCommand(`update "${relativePath}"`, this.getCustomSvnRoot()!);
+            this.outputChannel.appendLine(`相对路径: ${escapedPath}`);
+            const result = await this.executeSvnCommand(`update "${escapedPath}"`, this.getCustomSvnRoot()!);
             this.outputChannel.appendLine(result);
             this.outputChannel.appendLine('========== SVN更新操作完成 ==========');
             return;
@@ -480,8 +544,17 @@ export class SvnService {
         }
       }
       
+      // 特殊处理：如果路径包含@符号，需要在路径后添加额外的@来转义
+      let targetPath = fsPath;
+      if (fsPath.includes('@') && !isDirectory) { // 只对文件应用转义，目录更新通常不需要指定路径
+        targetPath = `${fsPath}@`;
+        this.outputChannel.appendLine(`转义路径: ${targetPath}`);
+      }
+      
       this.outputChannel.appendLine('正在更新工作副本...');
-      const result = await this.executeSvnCommand('update', fsPath);
+      const updateCommand = isDirectory ? 'update' : `update "${targetPath}"`;
+      const workingDir = isDirectory ? fsPath : path.dirname(fsPath);
+      const result = await this.executeSvnCommand(updateCommand, workingDir);
       this.outputChannel.appendLine(result);
       this.outputChannel.appendLine('========== SVN更新操作完成 ==========');
     } catch (error: any) {
@@ -502,6 +575,15 @@ export class SvnService {
     
     try {
       this.outputChannel.appendLine('正在恢复文件到版本库状态...');
+      
+      // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+      let fileName = path.basename(filePath);
+      const needsEscaping = fileName.includes('@');
+      if (needsEscaping) {
+        // 对于revert，我们需要处理完整路径
+        filePath = `${filePath}@`;
+      }
+      
       const result = await this.executeSvnCommand(`revert "${filePath}"`, path.dirname(filePath));
       this.outputChannel.appendLine(result);
       this.outputChannel.appendLine('========== SVN恢复操作完成 ==========');
@@ -509,6 +591,58 @@ export class SvnService {
       this.outputChannel.appendLine(`错误: ${error.message}`);
       this.outputChannel.appendLine('========== SVN恢复操作失败 ==========');
       throw new Error(`恢复文件失败: ${error.message}`);
+    }
+  }
+
+  /**
+   * 恢复文件夹到版本库状态（递归恢复）
+   * @param folderPath 文件夹路径
+   */
+  public async revertFolder(folderPath: string): Promise<void> {
+    // 使用公共方法显示输出面板
+    this.showOutputChannel('SVN文件夹恢复操作');
+    this.outputChannel.appendLine(`恢复文件夹: ${folderPath}`);
+    
+    // 检查文件夹是否应该被排除
+    if (this.filterService.shouldExcludeFolder(folderPath)) {
+      this.outputChannel.appendLine(`文件夹 ${folderPath} 被过滤器排除，跳过恢复操作`);
+      this.outputChannel.appendLine('========== SVN文件夹恢复操作跳过 ==========');
+      vscode.window.showWarningMessage(`文件夹 ${path.basename(folderPath)} 在排除列表中，已跳过恢复`);
+      return;
+    }
+    
+    try {
+      let workingDir = folderPath;
+      let targetPath = '.';
+      
+      // 如果有自定义SVN根目录，检查是否需要使用它
+      if (this.getCustomSvnRoot()) {
+        try {
+          await this.executeSvnCommand('info', folderPath);
+        } catch (error) {
+          // 如果直接检查失败，使用自定义根目录
+          const relativePath = path.relative(this.getCustomSvnRoot()!, folderPath);
+          if (!relativePath.startsWith('..')) {
+            workingDir = this.getCustomSvnRoot()!;
+            targetPath = relativePath || '.';
+            this.outputChannel.appendLine(`使用自定义SVN根目录: ${workingDir}`);
+            this.outputChannel.appendLine(`相对路径: ${targetPath}`);
+          }
+        }
+      }
+      
+      this.outputChannel.appendLine('正在恢复文件夹到版本库状态（递归）...');
+      this.outputChannel.appendLine(`工作目录: ${workingDir}`);
+      this.outputChannel.appendLine(`目标路径: ${targetPath}`);
+      
+      // 使用 -R 参数进行递归恢复
+      const result = await this.executeSvnCommand(`revert -R "${targetPath}"`, workingDir);
+      this.outputChannel.appendLine(result);
+      this.outputChannel.appendLine('========== SVN文件夹恢复操作完成 ==========');
+    } catch (error: any) {
+      this.outputChannel.appendLine(`错误: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN文件夹恢复操作失败 ==========');
+      throw new Error(`恢复文件夹失败: ${error.message}`);
     }
   }
 
@@ -531,16 +665,27 @@ export class SvnService {
       this.outputChannel.appendLine(`工作目录: ${cwd}`);
       this.outputChannel.appendLine(`文件名: ${fileName}`);
       
+      // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+      const needsEscaping = fileName.includes('@');
+      if (needsEscaping) {
+        fileName = `${fileName}@`;
+      }
+      
       // 如果有自定义SVN根目录，检查是否需要使用它
       if (this.getCustomSvnRoot()) {
         try {
-          await this.executeSvnCommand(`info "${fileName}"`, cwd);
+          const infoCommand = needsEscaping ? `info "${fileName}"` : `info "${fileName}"`;
+          await this.executeSvnCommand(infoCommand, cwd);
         } catch (error) {
           // 如果直接检查失败，使用自定义根目录
           const relativePath = path.relative(this.getCustomSvnRoot()!, filePath);
           if (!relativePath.startsWith('..')) {
             cwd = this.getCustomSvnRoot()!;
             fileName = relativePath;
+            // 如果相对路径包含@符号，也需要转义
+            if (needsEscaping && !fileName.endsWith('@')) {
+              fileName = `${fileName}@`;
+            }
             this.outputChannel.appendLine(`使用自定义SVN根目录: ${cwd}`);
             this.outputChannel.appendLine(`相对路径: ${fileName}`);
           }
@@ -615,8 +760,15 @@ export class SvnService {
             if (relativePath.startsWith('..')) {
               throw new Error(`文件 ${file} 不在SVN工作副本中`);
             }
-            this.outputChannel.appendLine(`  ${file} -> ${relativePath}`);
-            return `"${relativePath}"`;
+            
+            // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+            let escapedPath = relativePath;
+            if (relativePath.includes('@')) {
+              escapedPath = `${relativePath}@`;
+            }
+            
+            this.outputChannel.appendLine(`  ${file} -> ${escapedPath}`);
+            return `"${escapedPath}"`;
           }).join(' ');
         }
       }
@@ -630,12 +782,26 @@ export class SvnService {
           // 如果文件在基础路径下，使用相对路径
           if (file.startsWith(workingDir)) {
             const relativePath = path.relative(workingDir, file);
-            this.outputChannel.appendLine(`  ${file} -> ${relativePath}`);
-            return `"${relativePath}"`;
+            
+            // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+            let escapedPath = relativePath;
+            if (relativePath.includes('@')) {
+              escapedPath = `${relativePath}@`;
+            }
+            
+            this.outputChannel.appendLine(`  ${file} -> ${escapedPath}`);
+            return `"${escapedPath}"`;
           }
+          
           // 否则使用绝对路径
-          this.outputChannel.appendLine(`  ${file} (绝对路径)`);
-          return `"${file}"`;
+          // 特殊处理：如果文件名包含@符号，需要在文件名后添加额外的@来转义
+          let escapedPath = file;
+          if (file.includes('@')) {
+            escapedPath = `${file}@`;
+          }
+          
+          this.outputChannel.appendLine(`  ${file} -> ${escapedPath} (绝对路径)`);
+          return `"${escapedPath}"`;
         }).join(' ');
       }
       

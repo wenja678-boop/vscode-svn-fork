@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { SvnService } from './svnService';
 import { SvnDiffProvider } from './diffProvider';
 import { SvnCommitPanel } from './commitPanel';
@@ -424,6 +425,58 @@ async function revertFile(filePath: string): Promise<void> {
 }
 
 /**
+ * 恢复文件夹到版本库状态
+ * @param folderPath 文件夹路径
+ */
+async function revertFolder(folderPath: string): Promise<void> {
+  try {
+    // 检查SVN是否已安装
+    if (!await svnService.isSvnInstalled()) {
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      return;
+    }
+    
+    // 检查文件夹是否在SVN工作副本中
+    if (!await svnService.isInWorkingCopy(folderPath)) {
+      const result = await vscode.window.showErrorMessage(
+        '该文件夹不在SVN工作副本中',
+        '设置SVN工作副本路径',
+        '取消'
+      );
+      
+      if (result === '设置SVN工作副本路径') {
+        await setSvnWorkingCopyRoot();
+        // 重新检查
+        if (!await svnService.isInWorkingCopy(folderPath)) {
+          vscode.window.showErrorMessage('文件夹仍不在SVN工作副本中，请检查设置的路径是否正确');
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    // 确认是否要恢复文件夹
+    const confirm = await vscode.window.showWarningMessage(
+      `确定要恢复文件夹 "${path.basename(folderPath)}" 及其所有子文件和子文件夹到版本库状态吗？这将丢失所有本地修改，此操作不可撤销。`,
+      { modal: true },
+      '确定',
+      '取消'
+    );
+
+    if (confirm !== '确定') {
+      return;
+    }
+
+    // 恢复文件夹
+    await svnService.revertFolder(folderPath);
+    vscode.window.showInformationMessage('文件夹已成功恢复到版本库状态');
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`SVN操作失败: ${error.message}`);
+  }
+}
+
+/**
  * 查看SVN日志
  * @param fsPath 文件或文件夹路径
  */
@@ -786,6 +839,26 @@ export function activate(context: vscode.ExtensionContext) {
     
     await revertFile(fileUri.fsPath);
   });
+
+  // 注册恢复文件夹命令
+  const revertFolderCommand = vscode.commands.registerCommand('vscode-svn.revertFolder', async (folderUri?: vscode.Uri) => {
+    if (!folderUri) {
+      // 如果没有通过右键菜单选择文件夹，则使用当前工作区文件夹
+      if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        folderUri = vscode.workspace.workspaceFolders[0].uri;
+      } else {
+        vscode.window.showErrorMessage('没有打开的工作区');
+        return;
+      }
+    }
+    
+    if (folderUri.scheme !== 'file') {
+      vscode.window.showErrorMessage('只能恢复本地文件夹');
+      return;
+    }
+    
+    await revertFolder(folderUri.fsPath);
+  });
   
   // 注册查看SVN日志命令
   const viewLogCommand = vscode.commands.registerCommand('vscode-svn.viewLog', async (fileUri?: vscode.Uri) => {
@@ -849,6 +922,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateDirectoryCommand,
     updateWorkspaceCommand,
     revertFileCommand,
+    revertFolderCommand,
     viewLogCommand,
     showLocalRevisionCommand,
     configureFilterCommand,
