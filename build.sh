@@ -18,5 +18,5 @@ vsce package
 
 # Step 2: Install the packaged extension into VSCode
 echo "Installing the extension into VSCode..."
-cursor --install-extension *.vsix
+cursor --install-extension *.vsix --force
 echo "Extension installed successfully!" 

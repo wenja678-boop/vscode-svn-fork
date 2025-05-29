@@ -52,9 +52,18 @@ export class SvnFolderCommitPanel {
             ? vscode.window.activeTextEditor.viewColumn
             : undefined;
 
+        // 检查是否已存在面板
         if (SvnFolderCommitPanel.currentPanel) {
-            SvnFolderCommitPanel.currentPanel._panel.reveal(column);
-            return;
+            // 比较文件夹路径，如果不同则关闭旧面板
+            if (SvnFolderCommitPanel.currentPanel.folderPath !== folderPath) {
+                console.log(`文件夹路径不同，关闭旧面板: ${SvnFolderCommitPanel.currentPanel.folderPath} -> ${folderPath}`);
+                SvnFolderCommitPanel.currentPanel.dispose();
+                // 注意：dispose() 方法会将 currentPanel 设置为 undefined
+            } else {
+                // 相同路径，直接显示现有面板
+                SvnFolderCommitPanel.currentPanel._panel.reveal(column);
+                return;
+            }
         }
 
         const panel = vscode.window.createWebviewPanel(
