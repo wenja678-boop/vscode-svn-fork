@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <link rel="stylesheet" href="{{STYLE_URI}}">
+</head>
+<body>
+    <div class="filter-section">
+        <div class="checkbox-group">
+            <label>
+                <input type="checkbox" id="modified-checkbox" checked>
+                已修改
+            </label>
+            <label>
+                <input type="checkbox" id="added-checkbox" checked>
+                新增
+            </label>
+            <label>
+                <input type="checkbox" id="deleted-checkbox" checked>
+                已删除
+            </label>
+            <label>
+                <input type="checkbox" id="unversioned-checkbox" checked>
+                未版本控制
+            </label>
+            <label>
+                <input type="checkbox" id="missing-checkbox" checked>
+                丢失
+            </label>
+        </div>
+        <div class="extension-filter">
+            <label class="extension-filter-label">文件后缀筛选：</label>
+            <select id="extensionFilter" multiple>
+            </select>
+        </div>
+        {{FILTER_INFO}}
+    </div>
+
+    <div class="file-list-container">
+        <div class="file-list">
+            <div class="file-list-header">
+                <span class="checkbox-cell">
+                    <input type="checkbox" id="selectAll">
+                </span>
+                <span>文件名</span>
+                <span>路径</span>
+                <span class="file-status">状态</span>
+                <span class="file-action">操作</span>
+            </div>
+            <div id="fileListContent">
+                {{FILE_LIST}}
+            </div>
+        </div>
+    </div>
+
+    <div class="commit-section">
+        <div class="prefix-section">
+            <div class="prefix-container">
+                <select id="prefixSelect">
+                    {{PREFIX_OPTIONS}}
+                </select>
+                <input type="text" id="prefixInput" class="prefix-input" placeholder="日志前缀" value="{{LATEST_PREFIX}}">
+                <button id="applyPrefixButton">应用前缀</button>
+            </div>
+        </div>
+        <textarea id="commitMessage" placeholder="请输入提交信息">{{LATEST_PREFIX}}</textarea>
+        <div class="button-container">
+            <button id="submitButton">提交</button>
+            <button id="generateAIButton">使用AI生成提交日志</button>
+        </div>
+    </div>
+
+    <script src="{{SCRIPT_URI}}"></script>
+</body>
+</html> 

@@ -3,6 +3,7 @@ import { SvnService } from './svnService';
 import { SvnDiffProvider } from './diffProvider';
 import { CommitLogStorage } from './commitLogStorage';
 import { SvnFilterService } from './filterService';
+import { TemplateManager } from './templateManager';
 import * as path from 'path';
 import { AiService } from './aiService';
 
@@ -21,6 +22,7 @@ export class SvnFolderCommitPanel {
     private readonly aiService: AiService;
     private outputChannel: vscode.OutputChannel;
     private readonly filterService: SvnFilterService;
+    private readonly templateManager: TemplateManager;
     private _filterStats: { totalFiles: number, filteredFiles: number, excludedFiles: number } = { totalFiles: 0, filteredFiles: 0, excludedFiles: 0 };
 
     private constructor(
@@ -34,6 +36,7 @@ export class SvnFolderCommitPanel {
         this._panel = panel;
         this.aiService = new AiService();
         this.filterService = new SvnFilterService();
+        this.templateManager = new TemplateManager(extensionUri);
         this._update();
 
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -94,7 +97,7 @@ export class SvnFolderCommitPanel {
         await this._updateFileStatuses();
         
         // 生成HTML
-        webview.html = this._getHtmlForWebview();
+        webview.html = await this._getHtmlForWebview();
     }
 
     private _getFilterInfo(): { totalFiles: number, filteredFiles: number, excludedFiles: number } {
@@ -470,622 +473,65 @@ export class SvnFolderCommitPanel {
         return finalMessage;
     }
 
-    private _getHtmlForWebview(): string {
-        const webview = this._panel.webview;
-
-        return `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-    <style>
-        body { 
-            padding: 10px; 
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            margin: 0;
-            box-sizing: border-box;
-        }
-        .filter-section {
-            margin-bottom: 10px;
-            padding: 8px;
-            background-color: var(--vscode-panel-background);
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
-        }
-        .filter-section label {
-            margin-right: 15px;
-            user-select: none;
-        }
-        .filter-info {
-            margin-top: 8px;
-            padding: 4px 8px;
-            background-color: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 3px;
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-        }
-        .filter-info.has-excluded {
-            background-color: var(--vscode-inputValidation-warningBackground);
-            border-color: var(--vscode-inputValidation-warningBorder);
-            color: var(--vscode-inputValidation-warningForeground);
-        }
-        .file-list-container {
-            flex: 1;
-            overflow: auto;
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
-            margin-bottom: 10px;
-            min-height: 200px;
-        }
-        .file-list { 
-            width: 100%;
-            border-collapse: collapse;
-        }
-        .file-list-header {
-            position: sticky;
-            top: 0;
-            display: grid;
-            grid-template-columns: 30px minmax(150px, 2fr) minmax(200px, 3fr) 100px 180px;
-            padding: 8px;
-            font-weight: bold;
-            background-color: var(--vscode-panel-background);
-            border-bottom: 1px solid var(--vscode-panel-border);
-            z-index: 1;
-        }
-        .file-item { 
-            display: grid;
-            grid-template-columns: 30px minmax(150px, 2fr) minmax(200px, 3fr) 100px 180px;
-            padding: 4px 8px;
-            cursor: pointer;
-            align-items: center;
-            border-bottom: 1px solid var(--vscode-panel-border);
-        }
-        .file-item:last-child {
-            border-bottom: none;
-        }
-        .file-item:hover { 
-            background-color: var(--vscode-list-hoverBackground);
-        }
-        .file-item.selected {
-            background-color: var(--vscode-list-activeSelectionBackground);
-            color: var(--vscode-list-activeSelectionForeground);
-        }
-        .file-name, .file-path {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-        .file-status {
-            text-align: center;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            padding: 0 4px;
-        }
-        .file-action {
-            text-align: right;
-            display: flex;
-            gap: 4px;
-            justify-content: flex-end;
-            min-width: 0;
-        }
-        .file-action button {
-            padding: 2px 4px;
-            font-size: 11px;
-            white-space: nowrap;
-            min-width: fit-content;
-        }
-        .revert-button {
-            background-color: var(--vscode-errorForeground) !important;
-            opacity: 0.8;
-        }
-        .revert-button:hover {
-            opacity: 1;
-        }
-        .status-modified { color: #FFCC00; }
-        .status-added { color: #73C991; }
-        .status-deleted { color: #F14C4C; }
-        .status-unversioned { color: #C586C0; }
-        .status-conflict { color: #FF0000; font-weight: bold; }
-        .status-missing { color: #FF8800; }
-        .commit-section { 
-            flex-shrink: 0;
-            padding: 10px;
-            background-color: var(--vscode-panel-background);
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 4px;
-        }
-        .commit-section textarea { 
-            width: 100%; 
-            height: 80px; 
-            margin: 10px 0;
-            font-family: var(--vscode-editor-font-family);
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border);
-            padding: 8px;
-            box-sizing: border-box;
-        }
-        .commit-section button { 
-            margin-right: 10px;
-            padding: 4px 12px;
-        }
-        .prefix-section {
-            margin-bottom: 10px;
-        }
-        .prefix-container {
-            display: flex;
-            gap: 5px;
-            margin-bottom: 10px;
-        }
-        .prefix-input {
-            flex: 1;
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border);
-            padding: 4px;
-        }
-        #prefixSelect {
-            flex: 1;
-            background-color: var(--vscode-dropdown-background);
-            color: var(--vscode-dropdown-foreground);
-            border: 1px solid var(--vscode-dropdown-border);
-            padding: 4px;
-        }
-        #applyPrefixButton {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 4px 8px;
-            cursor: pointer;
-        }
-        #applyPrefixButton:hover {
-            background-color: var(--vscode-button-hoverBackground);
-        }
-        button {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 4px 8px;
-            cursor: pointer;
-        }
-        button:hover {
-            background-color: var(--vscode-button-hoverBackground);
-        }
-        .checkbox-group {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-        }
-        .checkbox-cell {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .checkbox-cell input[type="checkbox"] {
-            cursor: pointer;
-        }
-        textarea {
-            width: 100%;
-            min-height: 100px;
-            margin: 10px 0;
-            background-color: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border);
-            padding: 8px;
-            box-sizing: border-box;
-        }
-        .extension-filter {
-            margin-top: 10px;
-        }
-        
-        #extensionFilter {
-            width: 100%;
-            min-height: 30px;
-            background-color: var(--vscode-dropdown-background);
-            color: var(--vscode-dropdown-foreground);
-            border: 1px solid var(--vscode-dropdown-border);
-            padding: 4px;
-        }
-        
-        #extensionFilter option {
-            padding: 4px;
-        }
-        
-        .extension-filter-label {
-            display: block;
-            margin-bottom: 4px;
-            font-size: 12px;
-            color: var(--vscode-foreground);
-        }
-    </style>
-</head>
-<body>
-    <div class="filter-section">
-        <div class="checkbox-group">
-            <label>
-                <input type="checkbox" id="modified-checkbox" checked>
-                已修改
-            </label>
-            <label>
-                <input type="checkbox" id="added-checkbox" checked>
-                新增
-            </label>
-            <label>
-                <input type="checkbox" id="deleted-checkbox" checked>
-                已删除
-            </label>
-            <label>
-                <input type="checkbox" id="unversioned-checkbox" checked>
-                未版本控制
-            </label>
-            <label>
-                <input type="checkbox" id="missing-checkbox" checked>
-                丢失
-            </label>
-        </div>
-        <div class="extension-filter">
-            <label class="extension-filter-label">文件后缀筛选：</label>
-            <select id="extensionFilter" multiple>
-            </select>
-        </div>
-        ${this._renderFilterInfo()}
-    </div>
-
-    <div class="file-list-container">
-        <div class="file-list">
-            <div class="file-list-header">
-                <span class="checkbox-cell">
-                    <input type="checkbox" id="selectAll">
-                </span>
-                <span>文件名</span>
-                <span>路径</span>
-                <span class="file-status">状态</span>
-                <span class="file-action">操作</span>
-            </div>
-            <div id="fileListContent">
-                ${this._renderFileList(this._fileStatuses)}
-            </div>
-        </div>
-    </div>
-
-    <div class="commit-section">
-        <div class="prefix-section">
-            <div class="prefix-container">
-                <select id="prefixSelect">
-                    ${this._renderPrefixOptions()}
-                </select>
-                <input type="text" id="prefixInput" class="prefix-input" placeholder="日志前缀" value="${this.logStorage.getLatestPrefix()}">
-                <button id="applyPrefixButton">应用前缀</button>
-            </div>
-        </div>
-        <textarea id="commitMessage" placeholder="请输入提交信息">${this.logStorage.getLatestPrefix()}</textarea>
-        <div class="button-container">
-            <button id="submitButton">提交</button>
-            <button id="generateAIButton">使用AI生成提交日志</button>
-        </div>
-    </div>
-
-    <script>
-        (function() {
-            const vscode = acquireVsCodeApi();
-            
-            // 从状态中恢复或初始化
-            const previousState = vscode.getState() || { 
-                selectedFiles: [],
-                enabledTypes: ['modified', 'added', 'deleted', 'unversioned', 'missing'],
-                selectedExtensions: []
+    private async _getHtmlForWebview(): Promise<string> {
+        try {
+            // 准备模板变量
+            const templateVariables = {
+                FILTER_INFO: this._renderFilterInfo(),
+                FILE_LIST: this._renderFileList(this._fileStatuses),
+                PREFIX_OPTIONS: this._renderPrefixOptions(),
+                LATEST_PREFIX: this.logStorage.getLatestPrefix()
             };
-            
-            let selectedFiles = new Set(previousState.selectedFiles);
-            let enabledTypes = new Set(previousState.enabledTypes);
-            let selectedExtensions = new Set(previousState.selectedExtensions);
-            
-            // 保存状态的函数
-            function saveState() {
-                vscode.setState({
-                    selectedFiles: Array.from(selectedFiles),
-                    enabledTypes: Array.from(enabledTypes),
-                    selectedExtensions: Array.from(selectedExtensions)
-                });
-            }
-            
-            // 在状态变化的地方调用 saveState
-            function toggleFileType(type) {
-                if (enabledTypes.has(type)) {
-                    enabledTypes.delete(type);
-                    document.getElementById(type + '-checkbox').checked = false;
-                } else {
-                    enabledTypes.add(type);
-                    document.getElementById(type + '-checkbox').checked = true;
-                }
-                updateFileList();
-                saveState();  // 保存状态
-            }
-            
-            // 修改文件选择函数
-            function toggleAllFiles(checked) {
-                const visibleFiles = Array.from(document.querySelectorAll('.file-item'))
-                    .filter(item => item.style.display !== 'none')
-                    .map(item => item.getAttribute('data-path'));
-                
-                if (checked) {
-                    visibleFiles.forEach(path => selectedFiles.add(path));
-                } else {
-                    visibleFiles.forEach(path => selectedFiles.delete(path));
-                }
-                updateCheckboxes();
-                saveState();  // 保存状态
-            }
-            
-            // 同样在文件项的点击事件中添加状态保存
-            document.querySelectorAll('.file-item').forEach(item => {
-                const checkbox = item.querySelector('.file-checkbox');
-                const diffButton = item.querySelector('.diff-button');
-                const sideBySideButton = item.querySelector('.side-by-side-button');
-                const revertButton = item.querySelector('.revert-button');
-                const filePath = item.getAttribute('data-path');
 
-                if (checkbox) {
-                    checkbox.addEventListener('change', (e) => {
-                        if (e.target.checked) {
-                            selectedFiles.add(filePath);
-                        } else {
-                            selectedFiles.delete(filePath);
-                        }
-                        updateSelectAllCheckbox();
-                        saveState();  // 保存状态
-                    });
-                }
+            // 使用内联模板（CSS 和 JS 内嵌在 HTML 中）
+            return await this.templateManager.loadInlineTemplate('folderCommitPanel', templateVariables);
+        } catch (error) {
+            console.error('加载模板失败，使用备用模板:', error);
+            // 如果模板加载失败，返回一个简单的备用模板
+            return this._getFallbackHtml();
+        }
+    }
 
-                if (diffButton) {
-                    diffButton.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        showDiff(filePath);
-                    });
-                }
+    private _getFallbackHtml(): string {
+        return `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+                <style>
+                    body { padding: 20px; font-family: var(--vscode-font-family); }
+                    .error { color: var(--vscode-errorForeground); }
+                </style>
+            </head>
+            <body>
+                <div class="error">
+                    <h2>模板加载失败</h2>
+                    <p>无法加载文件夹提交面板模板，请检查模板文件是否存在。</p>
+                </div>
+            </body>
+            </html>
+        `;
+    }
 
-                if (sideBySideButton) {
-                    sideBySideButton.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        showSideBySideDiff(filePath);
-                    });
-                }
-
-                if (revertButton) {
-                    revertButton.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        revertFile(filePath);
-                    });
-                }
-            });
-            
-            // 在扩展筛选器变化时也保存状态
-            const extensionFilter = document.getElementById('extensionFilter');
-            if (extensionFilter) {
-                extensionFilter.addEventListener('change', (e) => {
-                    selectedExtensions.clear();
-                    Array.from(e.target.selectedOptions).forEach(option => {
-                        selectedExtensions.add(option.value);
-                    });
-                    updateFileList();
-                    saveState();  // 保存状态
-                });
-            }
-            
-            function initializeEventListeners() {
-                // 类型过滤复选框
-                document.getElementById('modified-checkbox').addEventListener('change', () => toggleFileType('modified'));
-                document.getElementById('added-checkbox').addEventListener('change', () => toggleFileType('added'));
-                document.getElementById('deleted-checkbox').addEventListener('change', () => toggleFileType('deleted'));
-                document.getElementById('unversioned-checkbox').addEventListener('change', () => toggleFileType('unversioned'));
-                document.getElementById('missing-checkbox').addEventListener('change', () => toggleFileType('missing'));
-
-                // 全选复选框
-                document.getElementById('selectAll').addEventListener('change', (e) => toggleAllFiles(e.target.checked));
-
-                // 前缀相关
-                document.getElementById('prefixSelect').addEventListener('change', updateCommitMessage);
-                document.getElementById('applyPrefixButton').addEventListener('click', applyPrefix);
-
-                // 提交按钮
-                document.getElementById('submitButton').addEventListener('click', submitCommit);
-                document.getElementById('generateAIButton').addEventListener('click', generateAILog);
-
-                // 初始化页面状态
-                updateFileList();
-                updateCheckboxes();
-            }
-
-            function updateFileList() {
-                const fileItems = document.querySelectorAll('.file-item');
-                let visibleCount = 0;
-                
-                fileItems.forEach(item => {
-                    const type = item.getAttribute('data-type');
-                    const fileName = item.querySelector('.file-name').textContent;
-                    const ext = fileName.includes('.') ? 
-                        '.' + fileName.split('.').pop().toLowerCase() : 
-                        '(无后缀)';
-                    
-                    const typeMatch = enabledTypes.has(type);
-                    const extensionMatch = selectedExtensions.size === 0 || selectedExtensions.has(ext);
-                    
-                    if (typeMatch && extensionMatch) {
-                        item.style.display = '';
-                        visibleCount++;
-                    } else {
-                        item.style.display = 'none';
-                        const filePath = item.getAttribute('data-path');
-                        if (selectedFiles.has(filePath)) {
-                            selectedFiles.delete(filePath);
-                        }
-                    }
-                });
-                
-                updateSelectAllCheckbox();
-            }
-
-            function updateCheckboxes() {
-                document.querySelectorAll('.file-item').forEach(item => {
-                    const filePath = item.getAttribute('data-path');
-                    const checkbox = item.querySelector('.file-checkbox');
-                    if (checkbox) {
-                        checkbox.checked = selectedFiles.has(filePath);
-                    }
-                });
-                updateSelectAllCheckbox();
-            }
-
-            function updateSelectAllCheckbox() {
-                const visibleFiles = Array.from(document.querySelectorAll('.file-item'))
-                    .filter(item => item.style.display !== 'none')
-                    .map(item => item.getAttribute('data-path'));
-                
-                const allChecked = visibleFiles.length > 0 && 
-                    visibleFiles.every(path => selectedFiles.has(path));
-                
-                const selectAllCheckbox = document.getElementById('selectAll');
-                if (selectAllCheckbox) {
-                    selectAllCheckbox.checked = allChecked;
-                    selectAllCheckbox.disabled = visibleFiles.length === 0;
-                }
-            }
-
-            function showDiff(filePath) {
-                vscode.postMessage({ command: 'showDiff', file: filePath });
-            }
-
-            function showSideBySideDiff(filePath) {
-                vscode.postMessage({ command: 'showSideBySideDiff', file: filePath });
-            }
-
-            function submitCommit() {
-                const message = document.getElementById('commitMessage').value;
-                if (!message) {
-                    vscode.postMessage({ 
-                        command: 'showError',
-                        text: '请输入提交信息'
-                    });
-                    return;
-                }
-                
-                const selectedFilesList = Array.from(selectedFiles);
-                if (selectedFilesList.length === 0) {
-                    vscode.postMessage({
-                        command: 'showError',
-                        text: '请选择要提交的文件'
-                    });
-                    return;
-                }
-
-                vscode.postMessage({
-                    command: 'commit',
-                    message: message,
-                    files: selectedFilesList
-                });
-            }
-
-            function generateAILog() {
-                vscode.postMessage({ command: 'generateAILog' });
-            }
-
-            function applyPrefix() {
-                const prefix = document.getElementById('prefixInput').value.trim();
-                if (prefix) {
-                    vscode.postMessage({
-                        command: 'savePrefix',
-                        prefix: prefix
-                    });
-                    
-                    const message = document.getElementById('commitMessage');
-                    const currentMessage = message.value.trim();
-                    
-                    const lines = currentMessage.split('\\n');
-                    const newMessage = prefix + '\\n' + (lines.length > 1 ? lines.slice(1).join('\\n') : currentMessage);
-                    
-                    message.value = newMessage;
-                }
-            }
-
-            function updateCommitMessage() {
-                const prefix = document.getElementById('prefixSelect').value;
-                if (prefix) {
-                    document.getElementById('prefixInput').value = prefix;
-                }
-            }
-
-            function revertFile(filePath) {
-                vscode.postMessage({ command: 'revertFile', file: filePath });
-            }
-
-            function updateExtensionFilter() {
-                const extensions = new Set();
-                document.querySelectorAll('.file-item').forEach(item => {
-                    const fileName = item.querySelector('.file-name').textContent;
-                    const ext = fileName.includes('.') ? 
-                        '.' + fileName.split('.').pop().toLowerCase() : 
-                        '(无后缀)';
-                    extensions.add(ext);
-                });
-
-                const extensionFilter = document.getElementById('extensionFilter');
-                if (extensionFilter) {
-                    const selectedValues = Array.from(selectedExtensions);
-                    extensionFilter.innerHTML = Array.from(extensions)
-                        .sort()
-                        .map(ext => \`<option value="\${ext}" \${selectedValues.includes(ext) ? 'selected' : ''}>\${ext}</option>\`)
-                        .join('');
-                }
-            }
-
-            // 监听消息
-            window.addEventListener('message', event => {
-                const message = event.data;
-                switch (message.command) {
-                    case 'setCommitMessage':
-                        document.getElementById('commitMessage').value = message.message;
-                        break;
-                    case 'getSelectedFiles':
-                        vscode.postMessage({
-                            command: 'selectedFiles',
-                            files: Array.from(selectedFiles)
-                        });
-                        break;
-                    case 'getCurrentPrefix':
-                        const prefixInput = document.getElementById('prefixInput');
-                        vscode.postMessage({
-                            command: 'currentPrefix',
-                            prefix: prefixInput ? prefixInput.value.trim() : ''
-                        });
-                        break;
-                    case 'setGeneratingStatus':
-                        const aiButton = document.getElementById('generateAIButton');
-                        if (message.status) {
-                            aiButton.disabled = true;
-                            aiButton.textContent = '生成中...';
-                        } else {
-                            aiButton.disabled = false;
-                            aiButton.textContent = '使用AI生成提交日志';
-                        }
-                        break;
-                }
-            });
-
-            // 页面加载完成后初始化
-            document.addEventListener('DOMContentLoaded', () => {
-                initializeEventListeners();
-                updateExtensionFilter();
-                updateFileList();
-                updateCheckboxes();
-            });
-        })();
-    </script>
-</body>
-</html>`;
+    private _renderFilterInfo(): string {
+        const filterInfo = this._getFilterInfo();
+        const hasExcluded = filterInfo.excludedFiles > 0;
+        const cssClass = hasExcluded ? 'filter-info has-excluded' : 'filter-info';
+        
+        if (filterInfo.totalFiles === 0) {
+            return `<div class="${cssClass}">📁 没有检测到文件变更</div>`;
+        }
+        
+        if (hasExcluded) {
+            return `<div class="${cssClass}">
+                🔍 文件统计: 总共 ${filterInfo.totalFiles} 个文件，显示 ${filterInfo.filteredFiles} 个，
+                <strong>排除了 ${filterInfo.excludedFiles} 个文件</strong>
+                <br>💡 被排除的文件不会显示在列表中，也不会被提交到SVN
+            </div>`;
+        } else {
+            return `<div class="${cssClass}">📊 显示 ${filterInfo.filteredFiles} 个文件</div>`;
+        }
     }
 
     private _renderFileList(files: FileStatus[]): string {
@@ -1143,26 +589,6 @@ export class SvnFolderCommitPanel {
         return prefixes.map(prefix => 
             `<option value="${prefix}">${prefix}</option>`
         ).join('');
-    }
-
-    private _renderFilterInfo(): string {
-        const filterInfo = this._getFilterInfo();
-        const hasExcluded = filterInfo.excludedFiles > 0;
-        const cssClass = hasExcluded ? 'filter-info has-excluded' : 'filter-info';
-        
-        if (filterInfo.totalFiles === 0) {
-            return `<div class="${cssClass}">📁 没有检测到文件变更</div>`;
-        }
-        
-        if (hasExcluded) {
-            return `<div class="${cssClass}">
-                🔍 文件统计: 总共 ${filterInfo.totalFiles} 个文件，显示 ${filterInfo.filteredFiles} 个，
-                <strong>排除了 ${filterInfo.excludedFiles} 个文件</strong>
-                <br>💡 被排除的文件不会显示在列表中，也不会被提交到SVN
-            </div>`;
-        } else {
-            return `<div class="${cssClass}">📊 显示 ${filterInfo.filteredFiles} 个文件</div>`;
-        }
     }
 
     private _getHtmlForDiffView(filePath: string, diff: string): string {

@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN",
   "description": "继承了svn基本功能,并增加了AI提交日志功能",
-  "version": "4.4.2",
+  "version": "4.4.3",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -271,7 +271,8 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "tsc -p ./ && npm run copy-templates",
+    "copy-templates": "mkdir -p out/templates && cp -r src/templates/* out/templates/ && mkdir -p templates && cp -r src/templates/* templates/",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node ./out/test/runTest.js"
