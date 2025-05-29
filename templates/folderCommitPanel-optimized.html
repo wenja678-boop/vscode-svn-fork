@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <style>
+        /* 现代化的UI样式 */
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            padding: 16px;
+            font-family: var(--vscode-font-family);
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* 顶部工具栏 */
+        .toolbar {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--vscode-panel-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toolbar-divider {
+            width: 1px;
+            height: 24px;
+            background: var(--vscode-panel-border);
+            margin: 0 8px;
+        }
+
+        /* 筛选器样式 */
+        .filter-chips {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+        }
+
+        .filter-chip {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: var(--vscode-button-secondaryBackground);
+            border: 1px solid var(--vscode-button-border);
+            border-radius: 16px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+
+        .filter-chip.active {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+
+        .filter-chip:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .filter-chip input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+        }
+
+        /* 扩展筛选器 */
+        .extension-selector {
+            position: relative;
+            min-width: 120px;
+        }
+
+        .extension-dropdown {
+            padding: 6px 12px;
+            background: var(--vscode-dropdown-background);
+            border: 1px solid var(--vscode-dropdown-border);
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .extension-options {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--vscode-dropdown-background);
+            border: 1px solid var(--vscode-dropdown-border);
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+
+        .extension-option {
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .extension-option:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        /* 统计信息 */
+        .stats-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--vscode-inputValidation-infoBackground);
+            border: 1px solid var(--vscode-inputValidation-infoBorder);
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--vscode-inputValidation-infoForeground);
+        }
+
+        .stats-info.has-excluded {
+            background: var(--vscode-inputValidation-warningBackground);
+            border-color: var(--vscode-inputValidation-warningBorder);
+            color: var(--vscode-inputValidation-warningForeground);
+        }
+
+        /* 文件列表容器 */
+        .file-list-container {
+            flex: 1;
+            background: var(--vscode-panel-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 文件列表头部 */
+        .file-list-header {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            background: var(--vscode-panel-background);
+            border-bottom: 1px solid var(--vscode-panel-border);
+            font-weight: 600;
+            font-size: 13px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+
+        .header-checkbox {
+            width: 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .header-filename {
+            flex: 2;
+            min-width: 150px;
+        }
+
+        .header-path {
+            flex: 3;
+            min-width: 200px;
+        }
+
+        .header-status {
+            width: 100px;
+            text-align: center;
+        }
+
+        .header-actions {
+            width: 180px;
+            text-align: center;
+        }
+
+        /* 文件列表内容 */
+        .file-list-content {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        /* 文件项卡片式设计 */
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+            transition: all 0.2s ease;
+            cursor: pointer;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        .file-item:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .file-item.selected {
+            background: var(--vscode-list-activeSelectionBackground);
+            color: var(--vscode-list-activeSelectionForeground);
+        }
+
+        /* 文件项内容 */
+        .file-checkbox {
+            width: 40px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .file-info {
+            flex: 2;
+            min-width: 150px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .file-name {
+            font-weight: 500;
+            font-size: 13px;
+        }
+
+        .file-size {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .file-path {
+            flex: 3;
+            min-width: 200px;
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-status {
+            width: 100px;
+            text-align: center;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .status-modified {
+            background: rgba(255, 204, 0, 0.2);
+            color: #FFCC00;
+            border: 1px solid rgba(255, 204, 0, 0.3);
+        }
+
+        .status-added {
+            background: rgba(115, 201, 145, 0.2);
+            color: #73C991;
+            border: 1px solid rgba(115, 201, 145, 0.3);
+        }
+
+        .status-deleted {
+            background: rgba(241, 76, 76, 0.2);
+            color: #F14C4C;
+            border: 1px solid rgba(241, 76, 76, 0.3);
+        }
+
+        .status-unversioned {
+            background: rgba(197, 134, 192, 0.2);
+            color: #C586C0;
+            border: 1px solid rgba(197, 134, 192, 0.3);
+        }
+
+        .status-conflict {
+            background: rgba(255, 0, 0, 0.2);
+            color: #FF0000;
+            border: 1px solid rgba(255, 0, 0, 0.3);
+            animation: pulse 2s infinite;
+        }
+
+        .status-missing {
+            background: rgba(255, 136, 0, 0.2);
+            color: #FF8800;
+            border: 1px solid rgba(255, 136, 0, 0.3);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .file-actions {
+            width: 180px;
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+        }
+
+        .action-btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .action-btn:hover {
+            background: var(--vscode-button-hoverBackground);
+            color: var(--vscode-button-foreground);
+        }
+
+        .action-btn.danger {
+            background: rgba(241, 76, 76, 0.1);
+            color: #F14C4C;
+        }
+
+        .action-btn.danger:hover {
+            background: rgba(241, 76, 76, 0.2);
+        }
+
+        /* 提交区域 */
+        .commit-area {
+            background: var(--vscode-panel-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .commit-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .commit-title {
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .selected-count {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 2px 8px;
+            border-radius: 12px;
+        }
+
+        /* 前缀区域 */
+        .prefix-area {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .prefix-select {
+            flex: 1;
+            padding: 6px 12px;
+            background: var(--vscode-dropdown-background);
+            border: 1px solid var(--vscode-dropdown-border);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .prefix-input {
+            flex: 2;
+            padding: 6px 12px;
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .apply-prefix-btn {
+            padding: 6px 12px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+        .apply-prefix-btn:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        /* 提交消息区域 */
+        .commit-message {
+            width: 100%;
+            min-height: 80px;
+            padding: 12px;
+            background: var(--vscode-input-background);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            font-family: var(--vscode-editor-font-family);
+            font-size: 13px;
+            resize: vertical;
+        }
+
+        .commit-message:focus {
+            outline: none;
+            border-color: var(--vscode-focusBorder);
+        }
+
+        /* 提交按钮区域 */
+        .commit-buttons {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        .commit-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .commit-btn.primary {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+
+        .commit-btn.primary:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .commit-btn.secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .commit-btn.secondary:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .commit-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* 空状态 */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .empty-icon {
+            font-size: 48px;
+            opacity: 0.5;
+        }
+
+        .empty-title {
+            font-size: 16px;
+            font-weight: 500;
+        }
+
+        .empty-description {
+            font-size: 13px;
+            text-align: center;
+            max-width: 300px;
+        }
+
+        /* 响应式设计 */
+        @media (max-width: 768px) {
+            .toolbar {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+
+            .toolbar-section {
+                justify-content: center;
+            }
+
+            .toolbar-divider {
+                display: none;
+            }
+
+            .file-item {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+
+            .file-info, .file-path {
+                flex: none;
+                min-width: auto;
+            }
+
+            .file-actions {
+                width: auto;
+                justify-content: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶部工具栏 -->
+    <div class="toolbar">
+        <div class="toolbar-section">
+            <span style="font-weight: 600; font-size: 13px;">文件类型筛选：</span>
+            <div class="filter-chips">
+                <label class="filter-chip active">
+                    <input type="checkbox" id="modified-checkbox" checked>
+                    <span>已修改</span>
+                </label>
+                <label class="filter-chip active">
+                    <input type="checkbox" id="added-checkbox" checked>
+                    <span>新增</span>
+                </label>
+                <label class="filter-chip active">
+                    <input type="checkbox" id="deleted-checkbox" checked>
+                    <span>已删除</span>
+                </label>
+                <label class="filter-chip active">
+                    <input type="checkbox" id="unversioned-checkbox" checked>
+                    <span>未版本控制</span>
+                </label>
+                <label class="filter-chip active">
+                    <input type="checkbox" id="missing-checkbox" checked>
+                    <span>丢失</span>
+                </label>
+            </div>
+        </div>
+
+        <div class="toolbar-divider"></div>
+
+        <div class="toolbar-section">
+            <span style="font-weight: 600; font-size: 13px;">文件后缀：</span>
+            <div class="extension-selector">
+                <div class="extension-dropdown" id="extensionDropdown">
+                    <span id="extensionText">所有类型</span>
+                    <span style="float: right;">▼</span>
+                </div>
+                <div class="extension-options" id="extensionOptions">
+                    <!-- 动态生成的选项 -->
+                </div>
+            </div>
+        </div>
+
+        <div class="toolbar-divider"></div>
+
+        <div class="stats-info" id="statsInfo">
+            {{FILTER_INFO}}
+        </div>
+    </div>
+
+    <!-- 文件列表 -->
+    <div class="file-list-container">
+        <div class="file-list-header">
+            <div class="header-checkbox">
+                <input type="checkbox" id="selectAll">
+            </div>
+            <div class="header-filename">文件名</div>
+            <div class="header-path">路径</div>
+            <div class="header-status">状态</div>
+            <div class="header-actions">操作</div>
+        </div>
+        
+        <div class="file-list-content" id="fileListContent">
+            {{FILE_LIST}}
+        </div>
+    </div>
+
+    <!-- 提交区域 -->
+    <div class="commit-area">
+        <div class="commit-header">
+            <div class="commit-title">提交到SVN</div>
+            <div class="selected-count" id="selectedCount">已选择 0 个文件</div>
+        </div>
+
+        <div class="prefix-area">
+            <select class="prefix-select" id="prefixSelect">
+                <option value="">选择前缀模板</option>
+                {{PREFIX_OPTIONS}}
+            </select>
+            <input type="text" class="prefix-input" id="prefixInput" placeholder="输入自定义前缀" value="{{LATEST_PREFIX}}">
+            <button class="apply-prefix-btn" id="applyPrefixButton">应用前缀</button>
+        </div>
+
+        <textarea class="commit-message" id="commitMessage" placeholder="请输入提交信息...">{{LATEST_PREFIX}}</textarea>
+
+        <div class="commit-buttons">
+            <button class="commit-btn secondary" id="generateAIButton">
+                <span id="aiButtonText">🤖 AI生成提交日志</span>
+            </button>
+            <button class="commit-btn primary" id="submitButton">
+                📤 提交选中文件
+            </button>
+        </div>
+    </div>
+
+    <script>
+        {{SCRIPT_CONTENT}}
+    </script>
+</body>
+</html> 

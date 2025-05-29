@@ -95,6 +95,38 @@
     
     // 在扩展筛选器变化时也保存状态
     function initializeExtensionFilter() {
+        // 为新的标签式筛选添加事件监听
+        const extensionTagsContainer = document.getElementById('extensionTagsContainer');
+        const selectAllBtn = document.getElementById('selectAllExtensions');
+        const clearAllBtn = document.getElementById('clearAllExtensions');
+        
+        if (selectAllBtn) {
+            selectAllBtn.addEventListener('click', () => {
+                // 选择所有后缀
+                const allTags = document.querySelectorAll('.extension-tag');
+                allTags.forEach(tag => {
+                    const ext = tag.getAttribute('data-extension');
+                    selectedExtensions.add(ext);
+                    tag.classList.add('selected');
+                });
+                updateFileList();
+                saveState();
+            });
+        }
+        
+        if (clearAllBtn) {
+            clearAllBtn.addEventListener('click', () => {
+                // 清除所有选择
+                selectedExtensions.clear();
+                document.querySelectorAll('.extension-tag').forEach(tag => {
+                    tag.classList.remove('selected');
+                });
+                updateFileList();
+                saveState();
+            });
+        }
+        
+        // 保持对旧select元素的兼容性（如果存在）
         const extensionFilter = document.getElementById('extensionFilter');
         if (extensionFilter) {
             extensionFilter.addEventListener('change', (e) => {
@@ -103,7 +135,7 @@
                     selectedExtensions.add(option.value);
                 });
                 updateFileList();
-                saveState();  // 保存状态
+                saveState();
             });
         }
     }
@@ -255,19 +287,66 @@
     }
 
     function updateExtensionFilter() {
-        const extensions = new Set();
+        const extensions = new Map(); // 使用Map来统计每个后缀的文件数量
+        
+        // 遍历所有文件项，收集所有后缀及其数量
         document.querySelectorAll('.file-item').forEach(item => {
             const fileName = item.querySelector('.file-name').textContent;
             const ext = fileName.includes('.') ? 
                 '.' + fileName.split('.').pop().toLowerCase() : 
                 '(无后缀)';
-            extensions.add(ext);
+            
+            extensions.set(ext, (extensions.get(ext) || 0) + 1);
         });
 
+        // 更新标签式界面
+        const extensionTagsContainer = document.getElementById('extensionTagsContainer');
+        if (extensionTagsContainer) {
+            const selectedValues = Array.from(selectedExtensions);
+            
+            // 生成标签HTML
+            const tagsHtml = Array.from(extensions.entries())
+                .sort(([a], [b]) => a.localeCompare(b)) // 按后缀名排序
+                .map(([ext, count]) => {
+                    const isSelected = selectedValues.includes(ext);
+                    const selectedClass = isSelected ? 'selected' : '';
+                    return `
+                        <div class="extension-tag ${selectedClass}" 
+                             data-extension="${ext}" 
+                             title="点击切换选择状态">
+                            ${ext}
+                            <span class="file-count">(${count})</span>
+                        </div>
+                    `;
+                })
+                .join('');
+            
+            extensionTagsContainer.innerHTML = tagsHtml;
+            
+            // 为每个标签添加点击事件
+            extensionTagsContainer.querySelectorAll('.extension-tag').forEach(tag => {
+                tag.addEventListener('click', () => {
+                    const ext = tag.getAttribute('data-extension');
+                    
+                    if (selectedExtensions.has(ext)) {
+                        selectedExtensions.delete(ext);
+                        tag.classList.remove('selected');
+                    } else {
+                        selectedExtensions.add(ext);
+                        tag.classList.add('selected');
+                    }
+                    
+                    updateFileList();
+                    saveState();
+                });
+            });
+        }
+
+        // 保持对旧select元素的兼容性（如果存在）
         const extensionFilter = document.getElementById('extensionFilter');
         if (extensionFilter) {
             const selectedValues = Array.from(selectedExtensions);
-            extensionFilter.innerHTML = Array.from(extensions)
+            extensionFilter.innerHTML = Array.from(extensions.keys())
                 .sort()
                 .map(ext => `<option value="${ext}" ${selectedValues.includes(ext) ? 'selected' : ''}>${ext}</option>`)
                 .join('');

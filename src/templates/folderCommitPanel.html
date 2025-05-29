@@ -31,8 +31,13 @@
         </div>
         <div class="extension-filter">
             <label class="extension-filter-label">文件后缀筛选：</label>
-            <select id="extensionFilter" multiple>
-            </select>
+            <div class="extension-tags-container" id="extensionTagsContainer">
+                <!-- 动态生成的后缀标签将在这里显示 -->
+            </div>
+            <div class="extension-actions">
+                <button class="extension-action-btn" id="selectAllExtensions" title="选择全部后缀">全选</button>
+                <button class="extension-action-btn" id="clearAllExtensions" title="清除全部选择">清空</button>
+            </div>
         </div>
         {{FILTER_INFO}}
     </div>

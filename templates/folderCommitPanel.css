@@ -235,22 +235,81 @@ textarea {
     margin-top: 10px;
 }
 
-#extensionFilter {
-    width: 100%;
-    min-height: 30px;
-    background-color: var(--vscode-dropdown-background);
-    color: var(--vscode-dropdown-foreground);
-    border: 1px solid var(--vscode-dropdown-border);
-    padding: 4px;
-}
-
-#extensionFilter option {
-    padding: 4px;
-}
-
 .extension-filter-label {
     display: block;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
     font-size: 12px;
     color: var(--vscode-foreground);
+    font-weight: 500;
+}
+
+.extension-tags-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+    min-height: 32px;
+    padding: 4px;
+    border: 1px solid var(--vscode-input-border);
+    border-radius: 4px;
+    background-color: var(--vscode-input-background);
+}
+
+.extension-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+    border: 1px solid var(--vscode-button-border);
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+}
+
+.extension-tag:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+    transform: translateY(-1px);
+}
+
+.extension-tag.selected {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border-color: var(--vscode-focusBorder);
+    box-shadow: 0 0 0 1px var(--vscode-focusBorder);
+}
+
+.extension-tag .file-count {
+    margin-left: 4px;
+    opacity: 0.7;
+    font-size: 10px;
+}
+
+.extension-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.extension-action-btn {
+    padding: 2px 8px;
+    font-size: 11px;
+    border-radius: 3px;
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+    border: 1px solid var(--vscode-button-border);
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.extension-action-btn:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+/* 保持向后兼容，隐藏旧的select元素 */
+#extensionFilter {
+    display: none;
 } 
