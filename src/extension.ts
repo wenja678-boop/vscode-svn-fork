@@ -8,6 +8,7 @@ import { CommitLogStorage } from './commitLogStorage';
 import { SvnFolderCommitPanel } from './folderCommitPanel';
 import { SvnLogPanel } from './svnLogPanel';
 import { SvnFilterService } from './filterService';
+import { AiCacheService } from './aiCacheService';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -679,6 +680,80 @@ async function showFilterInfo(): Promise<void> {
   filterService.showExcludeInfo();
 }
 
+/**
+ * 显示AI缓存统计信息
+ */
+async function showAICacheStats(): Promise<void> {
+  try {
+    const cacheService = AiCacheService.getInstance();
+    const stats = cacheService.getCacheStats();
+    
+    const message = `AI缓存统计信息:
+    
+📊 缓存条目数: ${stats.totalEntries}
+💾 缓存文件大小: ${stats.cacheSize}
+📅 最旧条目: ${stats.oldestEntry}
+📅 最新条目: ${stats.newestEntry}
+
+缓存位置: ~/.vscode-svn-ai-cache/
+过期时间: 30天`;
+    
+    const action = await vscode.window.showInformationMessage(
+      message,
+      '清理过期缓存',
+      '清空所有缓存',
+      '关闭'
+    );
+    
+    if (action === '清理过期缓存') {
+      await cleanExpiredAICache();
+    } else if (action === '清空所有缓存') {
+      await clearAICache();
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`获取缓存统计失败: ${error.message}`);
+  }
+}
+
+/**
+ * 清空AI缓存
+ */
+async function clearAICache(): Promise<void> {
+  try {
+    const confirm = await vscode.window.showWarningMessage(
+      '确定要清空所有AI分析缓存吗？这将删除所有已保存的分析结果。',
+      '确定',
+      '取消'
+    );
+    
+    if (confirm === '确定') {
+      const cacheService = AiCacheService.getInstance();
+      cacheService.clearAllCache();
+      vscode.window.showInformationMessage('AI缓存已清空');
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`清空缓存失败: ${error.message}`);
+  }
+}
+
+/**
+ * 清理过期AI缓存
+ */
+async function cleanExpiredAICache(): Promise<void> {
+  try {
+    const cacheService = AiCacheService.getInstance();
+    const removedCount = cacheService.cleanExpiredCache();
+    
+    if (removedCount > 0) {
+      vscode.window.showInformationMessage(`已清理 ${removedCount} 条过期缓存记录`);
+    } else {
+      vscode.window.showInformationMessage('没有发现过期的缓存记录');
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`清理过期缓存失败: ${error.message}`);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -687,6 +762,7 @@ export function activate(context: vscode.ExtensionContext) {
   diffProvider = new SvnDiffProvider(svnService);
   logStorage = new CommitLogStorage(context);
   filterService = new SvnFilterService();
+  // AI缓存服务使用单例模式，无需在此初始化
   
   // 注册上传文件命令
   const uploadFileCommand = vscode.commands.registerCommand('vscode-svn.uploadFile', async (fileUri?: vscode.Uri) => {
@@ -912,6 +988,21 @@ export function activate(context: vscode.ExtensionContext) {
     await showFilterInfo();
   });
   
+  // 注册显示AI缓存统计命令
+  const showAICacheStatsCommand = vscode.commands.registerCommand('vscode-svn.showAICacheStats', async () => {
+    await showAICacheStats();
+  });
+  
+  // 注册清空AI缓存命令
+  const clearAICacheCommand = vscode.commands.registerCommand('vscode-svn.clearAICache', async () => {
+    await clearAICache();
+  });
+  
+  // 注册清理过期AI缓存命令
+  const cleanExpiredAICacheCommand = vscode.commands.registerCommand('vscode-svn.cleanExpiredAICache', async () => {
+    await cleanExpiredAICache();
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -926,10 +1017,16 @@ export function activate(context: vscode.ExtensionContext) {
     viewLogCommand,
     showLocalRevisionCommand,
     configureFilterCommand,
-    showFilterInfoCommand
+    showFilterInfoCommand,
+    showAICacheStatsCommand,
+    clearAICacheCommand,
+    cleanExpiredAICacheCommand
   );
 }
 
 export function deactivate() {
   console.log('VSCode SVN 扩展已停用');
+  
+  // 释放AI缓存服务单例
+  AiCacheService.destroyInstance();
 } 

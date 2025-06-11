@@ -1,0 +1,482 @@
+body {
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+    color: var(--vscode-foreground);
+    background-color: var(--vscode-editor-background);
+    padding: 0;
+    margin: 0;
+}
+
+.container {
+    display: flex;
+    height: calc(100vh - 40px); /* 减去工具栏高度 */
+    overflow: hidden;
+}
+
+.log-list {
+    width: 30%;
+    border-right: 1px solid var(--vscode-panel-border);
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.log-details {
+    width: 70%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.detail-header {
+    padding: 10px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-editor-background);
+}
+
+.detail-title {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.detail-info {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+    color: var(--vscode-descriptionForeground);
+}
+
+.detail-message {
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 10px;
+    background-color: var(--vscode-textBlockQuote-background);
+    border-left: 5px solid var(--vscode-textBlockQuote-border);
+    margin: 10px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+
+.detail-content-container {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+}
+
+.file-list-container {
+    flex: 1;
+    overflow-y: auto;
+    border-top: 1px solid var(--vscode-panel-border);
+    padding: 0 10px;
+}
+
+.file-list-header {
+    position: sticky;
+    top: 0;
+    background-color: var(--vscode-editor-background);
+    padding: 10px 0;
+    font-weight: bold;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.file-list-title-container {
+    display: flex;
+    align-items: center;
+}
+
+.file-list-title {
+    font-weight: bold;
+    margin-right: 10px;
+}
+
+.file-count {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+}
+
+.file-list-filter {
+    display: flex;
+    align-items: center;
+}
+
+.filter-label {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    font-size: 0.9em;
+    color: var(--vscode-foreground);
+}
+
+.filter-checkbox {
+    margin-right: 5px;
+    cursor: pointer;
+}
+
+.log-entry {
+    padding: 10px;
+    padding-left: 15px; /* 增加左侧padding */
+    margin-bottom: 10px;
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+    cursor: pointer;
+    position: relative; /* 添加相对定位，用于放置新标记 */
+}
+
+.log-entry:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.log-entry.selected {
+    background-color: var(--vscode-list-activeSelectionBackground);
+    color: var(--vscode-list-activeSelectionForeground);
+}
+
+.log-entry.newer-than-local {
+    border-left: 4px solid #ff9800; /* 保留左侧橙色边框标记 */
+}
+
+.local-revision-info {
+    margin: 10px;
+    padding: 5px 10px;
+    background-color: var(--vscode-editor-infoForeground, rgba(100, 200, 255, 0.1));
+    border-left: 4px solid var(--vscode-notificationsInfoIcon-foreground, #75beff);
+    border-radius: 3px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.local-revision-label {
+    font-weight: bold;
+}
+
+.log-header {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 5px;
+}
+
+.log-revision {
+    font-weight: bold;
+}
+
+.log-author {
+    font-style: italic;
+}
+
+.log-date {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+}
+
+.log-message {
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-top: 5px;
+}
+
+.path-list-header {
+    display: flex;
+    font-weight: bold;
+    padding: 5px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    margin-bottom: 5px;
+    position: sticky;
+    top: 40px;
+    background-color: var(--vscode-editor-background);
+    z-index: 1;
+}
+
+.path-list-header .path-action {
+    width: 60px;
+}
+
+.path-list-header .path-filename {
+    width: 200px;
+}
+
+.path-list-header .path-filepath {
+    flex: 1;
+}
+
+.path-list-header .path-detail {
+    width: 80px;
+    text-align: center;
+}
+
+.path-item {
+    padding: 5px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+}
+
+.path-item:hover {
+    background-color: var(--vscode-list-hoverBackground);
+}
+
+.path-action {
+    width: 60px;
+    font-weight: bold;
+    text-align: center;
+}
+
+.path-action.A {
+    color: #4CAF50; /* 添加 - 绿色 */
+}
+
+.path-action.M {
+    color: #2196F3; /* 修改 - 蓝色 */
+}
+
+.path-action.D {
+    color: #F44336; /* 删除 - 红色 */
+}
+
+.path-action.R {
+    color: #FF9800; /* 替换 - 橙色 */
+}
+
+.path-filename {
+    width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.path-filepath {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--vscode-descriptionForeground);
+}
+
+.path-detail {
+    width: 80px;
+    text-align: center;
+}
+
+.detail-button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 3px 8px;
+    cursor: pointer;
+    border-radius: 2px;
+    font-size: 0.9em;
+}
+
+.detail-button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+/* AI分析按钮样式 */
+.ai-analysis-button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 8px 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 0.9em;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background-color 0.2s ease;
+    margin-right: 10px;
+}
+
+.ai-analysis-button:hover:not(:disabled) {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.ai-analysis-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background-color: var(--vscode-button-secondaryBackground);
+}
+
+.detail-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.loading {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+    z-index: 999;
+}
+
+.loading-text {
+    color: white;
+    font-size: 1.2em;
+}
+
+.toolbar {
+    padding: 10px;
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    height: 20px;
+}
+
+button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 2px;
+}
+
+button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--vscode-descriptionForeground);
+}
+
+.empty-icon {
+    font-size: 3em;
+    margin-bottom: 10px;
+}
+
+.load-more {
+    text-align: center;
+    padding: 10px;
+    margin-top: 10px;
+}
+
+.highlight {
+    background-color: var(--vscode-editor-findMatchHighlightBackground, rgba(234, 92, 0, 0.33));
+    color: var(--vscode-editor-foreground);
+    font-weight: bold;
+    border-radius: 2px;
+    padding: 0 2px;
+}
+
+/* 筛选表单样式 */
+.filter-form {
+    padding: 10px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    background-color: var(--vscode-editor-background);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.filter-mode-toggle {
+    display: flex;
+    align-items: center;
+    margin-right: 15px;
+    padding: 5px;
+    background-color: var(--vscode-button-secondaryBackground);
+    border-radius: 4px;
+}
+
+#revisionFilterSection, #dateFilterSection {
+    display: flex;
+    gap: 10px;
+}
+
+input[type="date"].filter-input {
+    width: 140px;
+    padding: 4px 8px;
+}
+
+.filter-group {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.filter-label {
+    white-space: nowrap;
+}
+
+.filter-input {
+    background-color: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    border: 1px solid var(--vscode-input-border);
+    padding: 4px 8px;
+    border-radius: 2px;
+    width: 120px;
+}
+
+.filter-input:focus {
+    outline: 1px solid var(--vscode-focusBorder);
+    border-color: var(--vscode-focusBorder);
+}
+
+.filter-button {
+    background-color: var(--vscode-button-background);
+    color: var(--vscode-button-foreground);
+    border: none;
+    padding: 6px 12px;
+    cursor: pointer;
+    border-radius: 2px;
+    white-space: nowrap;
+}
+
+.filter-button:hover {
+    background-color: var(--vscode-button-hoverBackground);
+}
+
+.filter-clear {
+    background-color: var(--vscode-button-secondaryBackground);
+    color: var(--vscode-button-secondaryForeground);
+}
+
+.filter-clear:hover {
+    background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.filter-result {
+    margin-left: auto;
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+}
+
+/* 响应式设计 */
+@media (max-width: 800px) {
+    .filter-form {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .filter-group {
+        width: 100%;
+    }
+    
+    .filter-input {
+        flex: 1;
+        width: auto;
+    }
+    
+    .filter-result {
+        margin-left: 0;
+        margin-top: 5px;
+    }
+} 

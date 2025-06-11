@@ -1,8 +1,8 @@
 {
   "name": "vscode-svn-ai",
-  "displayName": "VSCode SVN",
-  "description": "继承了svn基本功能,并增加了AI提交日志功能",
-  "version": "4.4.4",
+  "displayName": "SVN AI 智能提交助手",
+  "description": "VSCode SVN插件，集成AI智能生成提交日志功能，支持文件差异对比、批量提交、日志查看等完整SVN操作",
+  "version": "4.7.2",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -88,6 +88,18 @@
       {
         "command": "vscode-svn.showFilterInfo",
         "title": "SVN: 显示过滤信息"
+      },
+      {
+        "command": "vscode-svn.showAICacheStats",
+        "title": "SVN: 显示AI缓存统计"
+      },
+      {
+        "command": "vscode-svn.clearAICache",
+        "title": "SVN: 清空AI缓存"
+      },
+      {
+        "command": "vscode-svn.cleanExpiredAICache",
+        "title": "SVN: 清理过期AI缓存"
       }
     ],
     "menus": {

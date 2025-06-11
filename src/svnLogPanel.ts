@@ -3,6 +3,9 @@ import * as path from 'path';
 import * as os from 'os';
 import * as fs from 'fs';
 import { SvnService } from './svnService';
+import { TemplateManager } from './templateManager';
+import { AiService } from './aiService';
+import { AiCacheService } from './aiCacheService';
 
 /**
  * SVN日志条目接口
@@ -40,6 +43,61 @@ export class SvnLogPanel {
     private _minLoadedRevision: string | null = null; // 记录已加载的最小版本号
     private _isInitialLoad: boolean = true; // 标记是否为初始加载
     private _localRevision: string | null = null; // 存储本地修订版本号
+    private _currentFilterState: {
+        isFiltered: boolean;
+        filterType: 'none' | 'revision' | 'date' | 'author' | 'content';
+        filterDescription: string;
+        // 添加原始筛选参数
+        originalParams?: {
+            revision?: string;
+            author?: string;
+            content?: string;
+            startDate?: string;
+            endDate?: string;
+            useDate?: boolean;
+        };
+    } = { isFiltered: false, filterType: 'none', filterDescription: '', originalParams: undefined }; // 当前筛选状态
+    private readonly templateManager: TemplateManager;
+    private readonly aiService: AiService;
+    private readonly aiCacheService: AiCacheService;
+
+    // AI分析时需要排除的文件扩展名
+    private static readonly EXCLUDED_EXTENSIONS = [
+        // 二进制文件
+        '.exe', '.dll', '.so', '.dylib', '.bin', '.dat',
+        // 图片文件
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.svg', '.webp',
+        // 音视频文件
+        '.mp3', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.wav', '.ogg',
+        // 压缩文件
+        '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
+        // Office文档
+        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf',".xlsm",
+        // 其他二进制格式
+        '.jar', '.war', '.ear', '.class', '.pyc', '.pyo',
+        // 字体文件
+        '.ttf', '.otf', '.woff', '.woff2', '.eot',
+        // 数据库文件
+        '.db', '.sqlite', '.mdb', '.accdb'
+    ];
+
+    // AI分析时需要排除的文件名模式
+    private static readonly EXCLUDED_PATTERNS = [
+        /^\./, // 隐藏文件
+        /node_modules/, // Node.js依赖
+        /\.git/, // Git文件
+        /\.svn/, // SVN文件
+        /build\//, // 构建目录
+        /dist\//, // 分发目录
+        /target\//, // Maven目标目录
+        /\.idea\//, // IntelliJ IDEA配置
+        /\.vscode\//, // VSCode配置
+        /\.DS_Store/, // macOS系统文件
+        /Thumbs\.db/, // Windows缩略图文件
+        /\.log$/, // 日志文件
+        /\.tmp$/, // 临时文件
+        /\.temp$/ // 临时文件
+    ];
 
     private constructor(
         panel: vscode.WebviewPanel,
@@ -50,12 +108,15 @@ export class SvnLogPanel {
         this._panel = panel;
         this._targetPath = targetPath;
         this._outputChannel = vscode.window.createOutputChannel('SVN日志面板');
+        this.templateManager = new TemplateManager(extensionUri);
+        this.aiService = new AiService();
+        this.aiCacheService = AiCacheService.getInstance();
         this._log('SVN日志面板已创建，目标路径: ' + targetPath);
         this._minLoadedRevision = null; // 确保初始化为null
         this._isInitialLoad = true; // 初始加载标记
 
         // 设置网页视图内容
-        this._panel.webview.html = this._getHtmlForWebview();
+        this._initializeWebviewContent();
 
         // 监听面板关闭事件
         this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
@@ -75,6 +136,20 @@ export class SvnLogPanel {
      */
     private _log(message: string) {
         this._outputChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${message}`);
+    }
+
+    /**
+     * 初始化Webview内容
+     */
+    private async _initializeWebviewContent() {
+        try {
+            this._panel.webview.html = await this._getHtmlForWebview();
+        } catch (error) {
+            this._log(`初始化Webview内容失败: ${error}`);
+            // 使用备用HTML
+            const targetName = path.basename(this._targetPath);
+            this._panel.webview.html = this._getFallbackHtml(targetName);
+        }
     }
 
     /**
@@ -153,6 +228,8 @@ export class SvnLogPanel {
                     this._logEntries = [];
                     this._minLoadedRevision = null;
                     this._isInitialLoad = true;
+                    // 重置筛选状态
+                    this._currentFilterState = { isFiltered: false, filterType: 'none', filterDescription: '' };
                 }
             }
             
@@ -459,6 +536,15 @@ export class SvnLogPanel {
             hasMoreLogs: this._minLoadedRevision !== '1' // 如果最小版本号不是1，说明还有更多日志可加载
         });
 
+        // 发送当前筛选数量信息到前端
+        this._panel.webview.postMessage({
+            command: 'updateLogCount',
+            count: this._logEntries.length,
+            isFiltered: this._isFiltered(), // 判断是否处于筛选状态
+            hasMoreLogs: this._minLoadedRevision !== '1',
+            filterDescription: this._currentFilterState.filterDescription
+        });
+
         // 如果有日志条目，且没有选中的修订版本，自动选择第一个
         // 注意：只在非"加载更多"模式下执行此操作
         if (this._logEntries.length > 0 && !this._selectedRevision && !isLoadingMore) {
@@ -466,6 +552,98 @@ export class SvnLogPanel {
             this._log(`自动选择第一个日志条目，修订版本: ${firstRevision}`);
             this._showRevisionDetails(firstRevision);
         }
+    }
+
+    /**
+     * 判断当前是否处于筛选状态
+     */
+    private _isFiltered(): boolean {
+        return this._currentFilterState.isFiltered;
+    }
+
+    /**
+     * 更新筛选状态
+     */
+    private _updateFilterState(revision: string, author: string, content: string, startDate?: string, endDate?: string, useDate: boolean = false) {
+        const hasRevision = revision && revision.trim();
+        const hasAuthor = author && author.trim();
+        const hasContent = content && content.trim();
+        const hasDateFilter = useDate && (startDate || endDate);
+        
+        // 判断是否有任何筛选条件
+        const isFiltered = !!(hasRevision || hasAuthor || hasContent || hasDateFilter);
+        
+        if (isFiltered) {
+            let filterType: 'revision' | 'date' | 'author' | 'content' = 'revision';
+            let filterDescription = '';
+            
+            if (hasDateFilter) {
+                filterType = 'date';
+                if (startDate && endDate) {
+                    filterDescription = `日期范围: ${startDate} 至 ${endDate}`;
+                } else if (startDate) {
+                    filterDescription = `起始日期: ${startDate}`;
+                } else if (endDate) {
+                    filterDescription = `结束日期: ${endDate}`;
+                } else {
+                    filterDescription = '最近3天';
+                }
+            } else if (hasRevision) {
+                filterType = 'revision';
+                filterDescription = `修订版本: ${revision}`;
+            } else if (hasAuthor) {
+                filterType = 'author';
+                filterDescription = `作者: ${author}`;
+            } else if (hasContent) {
+                filterType = 'content';
+                filterDescription = `内容: ${content}`;
+            }
+            
+            // 组合多个筛选条件
+            const conditions = [];
+            if (hasRevision) conditions.push(`版本: ${revision}`);
+            if (hasAuthor) conditions.push(`作者: ${author}`);
+            if (hasContent) conditions.push(`内容: ${content}`);
+            if (hasDateFilter) {
+                if (startDate && endDate) {
+                    conditions.push(`日期: ${startDate} 至 ${endDate}`);
+                } else if (startDate) {
+                    conditions.push(`起始: ${startDate}`);
+                } else if (endDate) {
+                    conditions.push(`结束: ${endDate}`);
+                } else {
+                    conditions.push('最近3天');
+                }
+            }
+            
+            if (conditions.length > 1) {
+                filterDescription = conditions.join(', ');
+            }
+            
+            this._currentFilterState = {
+                isFiltered: true,
+                filterType: filterType,
+                filterDescription: filterDescription,
+                // 保存原始筛选参数
+                originalParams: {
+                    revision: revision,
+                    author: author,
+                    content: content,
+                    startDate: startDate,
+                    endDate: endDate,
+                    useDate: useDate
+                }
+            };
+        } else {
+            this._currentFilterState = {
+                isFiltered: false,
+                filterType: 'none',
+                filterDescription: '',
+                originalParams: undefined
+            };
+        }
+        
+        this._log(`筛选状态更新: ${JSON.stringify(this._currentFilterState)}`);
     }
 
     /**
@@ -602,7 +780,15 @@ export class SvnLogPanel {
                         break;
                     case 'loadMoreLogs':
                         this._log(`加载更多日志，限制: ${message.limit || 50}，最小已加载版本: ${this._minLoadedRevision || '无'}`);
-                        await this._loadLogs(message.limit || 50, true); // 传入true表示加载更多模式
+                        
+                        // 检查当前是否处于筛选状态
+                        if (this._currentFilterState.isFiltered) {
+                            this._log('当前处于筛选状态，使用筛选逻辑加载更多日志');
+                            await this._loadMoreFilteredLogs(message.limit || 50);
+                        } else {
+                            this._log('当前未筛选，使用普通逻辑加载更多日志');
+                            await this._loadLogs(message.limit || 50, true); // 传入true表示加载更多模式
+                        }
                         break;
                     case 'refresh':
                         this._log('刷新日志');
@@ -611,6 +797,8 @@ export class SvnLogPanel {
                         this._isInitialLoad = true;
                         // 重置本地版本号，确保刷新时获取最新版本
                         this._localRevision = null;
+                        // 重置筛选状态
+                        this._currentFilterState = { isFiltered: false, filterType: 'none', filterDescription: '', originalParams: undefined };
                         // 重新获取SVN相对路径
                         await this._getSvnRelativePath();
                         // 加载日志（非加载更多模式）
@@ -623,6 +811,18 @@ export class SvnLogPanel {
                     case 'filterLogs':
                         this._log(`筛选日志: 修订版本=${message.revision || '无'}, 作者=${message.author || '无'}, 内容=${message.content || '无'}, 起始日期=${message.startDate || '无'}, 结束日期=${message.endDate || '无'}, 使用日期=${message.useDate || false}`);
                         await this._filterLogs(message.revision, message.author, message.content, message.startDate, message.endDate, message.useDate || false);
+                        break;
+                    case 'analyzeRevisionWithAI':
+                        this._log(`AI分析修订版本: ${message.revision}`);
+                        await this._analyzeRevisionWithAI(message.revision);
+                        break;
+                    case 'forceAnalyzeRevisionWithAI':
+                        this._log(`强制重新AI分析修订版本: ${message.revision}`);
+                        await this._analyzeRevisionWithAI(message.revision, true);
+                        break;
+                    case 'analyzeRevisionWithAIFiltered':
+                        this._log(`AI分析修订版本(仅显示文件): ${message.revision}, 显示文件数量: ${message.visibleFiles?.length || 0}`);
+                        await this._analyzeRevisionWithAI(message.revision, false, message.visibleFiles);
                         break;
                     case 'debug':
                         this._log(`[Webview调试] ${message.message}`);
@@ -853,16 +1053,36 @@ export class SvnLogPanel {
     /**
      * 获取Webview的HTML内容
      */
-    private _getHtmlForWebview(): string {
+    private async _getHtmlForWebview(): Promise<string> {
         const targetName = path.basename(this._targetPath);
+        const isDirectory = fs.lstatSync(this._targetPath).isDirectory();
+        
+        try {
+            // 准备模板变量
+            const templateVariables = {
+                TARGET_NAME: targetName
+            };
+
+            // 使用内联模板（CSS 和 JS 内嵌在 HTML 中）
+            return await this.templateManager.loadInlineTemplate('svnLogPanel', templateVariables);
+        } catch (error) {
+            console.error('加载SVN日志面板模板失败，使用备用模板:', error);
+            // 如果模板加载失败，返回一个简单的备用模板
+            return this._getFallbackHtml(targetName);
+        }
+    }
+
+    /**
+     * 获取备用HTML内容
+     */
+    private _getFallbackHtml(targetName: string): string {
         const isDirectory = fs.lstatSync(this._targetPath).isDirectory();
         
         return `<!DOCTYPE html>
         <html lang="zh-CN">
         <head>
             <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>SVN日志: ${targetName}</title>
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
             <style>
                 body {
                     font-family: var(--vscode-font-family);
@@ -1268,6 +1488,7 @@ export class SvnLogPanel {
                 </div>
                 <div>
                     <span>SVN日志: ${targetName}</span>
+                    <span id="logCountInfo" class="log-count-info" style="margin-left: 10px; color: var(--vscode-descriptionForeground); font-size: 0.9em;"></span>
                 </div>
             </div>
             
@@ -1326,6 +1547,12 @@ export class SvnLogPanel {
             
             <div class="container">
                 <div class="log-list" id="logList">
+                    <!-- 日志列表头部信息 -->
+                    <div class="log-list-header" id="logListHeader" style="display: none; padding: 10px; border-bottom: 1px solid var(--vscode-panel-border); background-color: var(--vscode-editor-background); position: sticky; top: 0; z-index: 10;">
+                        <div class="log-count-summary" id="logCountSummary" style="font-weight: bold; color: var(--vscode-foreground);"></div>
+                        <div class="log-filter-status" id="logFilterStatus" style="font-size: 0.9em; color: var(--vscode-descriptionForeground); margin-top: 3px;"></div>
+                    </div>
+                    
                     <div class="empty-state">
                         <div class="empty-icon">📋</div>
                         <div>加载中，请稍候...</div>
@@ -1351,6 +1578,12 @@ export class SvnLogPanel {
                     const refreshButton = document.getElementById('refreshButton');
                     const localRevisionInfo = document.getElementById('localRevisionInfo');
                     const localRevisionNumber = document.getElementById('localRevisionNumber');
+                    
+                    // 筛选数量显示元素
+                    const logCountInfo = document.getElementById('logCountInfo');
+                    const logListHeader = document.getElementById('logListHeader');
+                    const logCountSummary = document.getElementById('logCountSummary');
+                    const logFilterStatus = document.getElementById('logFilterStatus');
                     
                     // 筛选表单元素
                     const revisionFilter = document.getElementById('revisionFilter');
@@ -1416,6 +1649,58 @@ export class SvnLogPanel {
                             command: 'debug',
                             message: message
                         });
+                    }
+                    
+                    // 更新日志数量显示
+                    function updateLogCountDisplay(count, isFiltered, hasMoreLogs, filterDescription) {
+                        debugLog('更新日志数量显示: count=' + count + ', isFiltered=' + isFiltered + ', hasMoreLogs=' + hasMoreLogs + ', filterDescription=' + (filterDescription || '无'));
+                        
+                        // 更新工具栏中的数量信息
+                        if (logCountInfo) {
+                            let countText = '';
+                            if (isFiltered) {
+                                countText = '(筛选结果: ' + count + ' 条)';
+                                if (hasMoreLogs) {
+                                    countText += ' 可加载更多';
+                                }
+                            } else {
+                                countText = '(显示: ' + count + ' 条)';
+                                if (hasMoreLogs) {
+                                    countText += ' 可加载更多';
+                                }
+                            }
+                            logCountInfo.textContent = countText;
+                            logCountInfo.style.color = isFiltered ? 'var(--vscode-notificationsWarningIcon-foreground)' : 'var(--vscode-descriptionForeground)';
+                        }
+                        
+                        // 更新日志列表头部信息
+                        if (logListHeader && logCountSummary && logFilterStatus) {
+                            if (count > 0) {
+                                logListHeader.style.display = 'block';
+                                
+                                // 设置数量摘要
+                                logCountSummary.textContent = '共 ' + count + ' 条日志记录';
+                                
+                                // 设置筛选状态
+                                if (isFiltered) {
+                                    let statusText = '🔍 筛选条件: ' + (filterDescription || '未知');
+                                    if (hasMoreLogs) {
+                                        statusText += ' (可加载更多历史记录)';
+                                    }
+                                    logFilterStatus.textContent = statusText;
+                                    logFilterStatus.style.color = 'var(--vscode-notificationsWarningIcon-foreground)';
+                                } else {
+                                    if (hasMoreLogs) {
+                                        logFilterStatus.textContent = '📄 显示最新记录 (可加载更多历史记录)';
+                                    } else {
+                                        logFilterStatus.textContent = '📄 显示全部记录';
+                                    }
+                                    logFilterStatus.style.color = 'var(--vscode-descriptionForeground)';
+                                }
+                            } else {
+                                logListHeader.style.display = 'none';
+                            }
+                        }
                     }
                     
                     debugLog('Webview脚本已初始化');
@@ -1532,6 +1817,10 @@ export class SvnLogPanel {
                                 } else {
                                     localRevisionInfo.style.display = 'none';
                                 }
+                                break;
+                            case 'updateLogCount':
+                                debugLog('更新日志数量信息: ' + message.count + ' 条记录');
+                                updateLogCountDisplay(message.count, message.isFiltered, message.hasMoreLogs, message.filterDescription);
                                 break;
                         }
                     });
@@ -2082,6 +2371,9 @@ export class SvnLogPanel {
         try {
             this._log(`开始筛选日志: 修订版本=${revision || '无'}, 作者=${author || '无'}, 内容=${content || '无'}, 起始日期=${startDate || '无'}, 结束日期=${endDate || '无'}, 使用日期=${useDate}`);
             
+            // 设置筛选状态
+            this._updateFilterState(revision, author, content, startDate, endDate, useDate);
+            
             // 显示加载中状态
             this._panel.webview.postMessage({ command: 'setLoading', value: true });
             
@@ -2214,6 +2506,132 @@ export class SvnLogPanel {
     }
 
     /**
+     * 在筛选状态下加载更多日志
+     */
+    private async _loadMoreFilteredLogs(limit: number = 50) {
+        try {
+            this._log('开始在筛选状态下加载更多日志');
+            
+            // 检查是否有最小版本号，如果没有则无法加载更多
+            if (!this._minLoadedRevision || this._minLoadedRevision === '1') {
+                this._log('已经加载到最早的版本，无法加载更多');
+                vscode.window.showInformationMessage('已经加载到最早的版本');
+                return;
+            }
+            
+            // 显示加载中状态
+            this._panel.webview.postMessage({ command: 'setLoading', value: true });
+            
+            // 获取当前筛选状态的参数
+            const filterState = this._currentFilterState;
+            this._log(`当前筛选状态: ${JSON.stringify(filterState)}`);
+            
+            // 构建SVN命令参数，从最小已加载版本的前一个版本开始
+            const minRevision = parseInt(this._minLoadedRevision);
+            const startRevision = minRevision - 1;
+            
+            if (startRevision < 1) {
+                this._log('已经到达版本1，无法加载更多');
+                this._panel.webview.postMessage({ command: 'setLoading', value: false });
+                vscode.window.showInformationMessage('已经加载到最早的版本');
+                return;
+            }
+            
+            let commandArgs = '';
+            
+            // 根据筛选类型构建命令参数
+            if (filterState.filterType === 'date') {
+                // 对于日期筛选，需要重新解析筛选描述来获取日期范围
+                // 这里简化处理，使用版本范围限制
+                commandArgs += ` -r ${startRevision}:1 -l ${limit} `;
+            } else if (filterState.filterType === 'revision') {
+                // 对于版本筛选，需要调整版本范围
+                commandArgs += ` -r ${startRevision}:1 -l ${limit} `;
+            } else {
+                // 对于作者和内容筛选，获取更大范围的日志，然后在客户端筛选
+                commandArgs += ` -r ${startRevision}:1 -l ${limit * 3} `; // 获取更多日志以确保筛选后有足够的结果
+            }
+            
+            // 执行SVN命令获取更多日志
+            const logCommand = `log "${this._targetPath}" ${commandArgs} --verbose --xml`;
+            this._log(`执行SVN命令获取更多筛选日志: ${logCommand}`);
+            
+            const logXml = await this.svnService.executeSvnCommand(logCommand, path.dirname(this._targetPath), false);
+            
+            // 解析XML获取日志条目
+            const newEntries = this._parseLogXml(logXml);
+            this._log(`解析得到 ${newEntries.length} 条新日志条目`);
+            
+            if (newEntries.length === 0) {
+                this._log('没有获取到新的日志条目');
+                this._panel.webview.postMessage({ command: 'setLoading', value: false });
+                vscode.window.showInformationMessage('没有更多日志记录');
+                return;
+            }
+            
+            // 应用客户端筛选（如果需要）
+            let filteredNewEntries = newEntries;
+            
+            // 使用保存的原始筛选参数重新应用筛选
+            if (filterState.originalParams) {
+                const params = filterState.originalParams;
+                
+                filteredNewEntries = newEntries.filter(entry => {
+                    // 作者筛选
+                    if (params.author && params.author.trim()) {
+                        if (!entry.author.toLowerCase().includes(params.author.toLowerCase())) {
+                            return false;
+                        }
+                    }
+                    
+                    // 内容筛选
+                    if (params.content && params.content.trim()) {
+                        if (!entry.message.toLowerCase().includes(params.content.toLowerCase())) {
+                            return false;
+                        }
+                    }
+                    
+                    return true;
+                });
+                
+                this._log(`应用客户端筛选后剩余 ${filteredNewEntries.length} 条日志条目`);
+            }
+            
+            // 过滤掉已经存在的日志条目（避免重复）
+            const existingRevisions = new Set(this._logEntries.map(entry => entry.revision));
+            const uniqueNewEntries = filteredNewEntries.filter(entry => !existingRevisions.has(entry.revision));
+            
+            this._log(`过滤重复后剩余 ${uniqueNewEntries.length} 条新日志条目`);
+            
+            if (uniqueNewEntries.length === 0) {
+                this._log('所有新日志条目都已存在，无新内容');
+                this._panel.webview.postMessage({ command: 'setLoading', value: false });
+                vscode.window.showInformationMessage('没有更多新的日志记录');
+                return;
+            }
+            
+            // 更新日志条目数组
+            this._updateLogEntries(uniqueNewEntries, true);
+            
+            // 标记哪些版本比本地版本更新
+            this._markNewerRevisions();
+            
+            // 更新界面
+            this._updateLogList(true); // 传入true表示是加载更多操作
+            
+            // 隐藏加载状态
+            this._panel.webview.postMessage({ command: 'setLoading', value: false });
+            
+            this._log(`成功加载更多筛选日志，新增 ${uniqueNewEntries.length} 条记录`);
+            
+        } catch (error: any) {
+            this._log(`在筛选状态下加载更多日志失败: ${error.message}`);
+            vscode.window.showErrorMessage(`加载更多日志失败: ${error.message}`);
+            this._panel.webview.postMessage({ command: 'setLoading', value: false });
+        }
+    }
+
+    /**
      * 释放资源
      */
     public dispose() {
@@ -2231,6 +2649,9 @@ export class SvnLogPanel {
         
         // 释放输出通道
         this._outputChannel.dispose();
+        
+        // 释放缓存服务
+        this.aiCacheService.dispose();
     }
 
     // 添加新方法，用于更新日志条目数组并记录最小版本号
@@ -2267,5 +2688,737 @@ export class SvnLogPanel {
                 }
             }
         });
+    }
+
+    /**
+     * 使用AI分析指定修订版本的代码差异
+     */
+    private async _analyzeRevisionWithAI(revision: string, force: boolean = false, visibleFiles?: SvnLogPath[]) {
+        try {
+            this._log(`开始AI分析修订版本: ${revision}`);
+            
+            // 显示加载中状态
+            this._panel.webview.postMessage({ command: 'setLoading', value: true });
+            
+            // 查找选中的日志条目
+            const logEntry = this._logEntries.find(entry => entry.revision === revision);
+            if (!logEntry) {
+                throw new Error(`未找到修订版本 ${revision} 的日志条目`);
+            }
+            
+            // 获取该版本的所有文件差异
+            const filesDiffs: string[] = [];
+            let filterInfo: { totalFiles: number; analyzedFiles: number; excludedFiles: string[] } | undefined;
+            let filteredFiles: SvnLogPath[] = [];
+            
+            if (logEntry.paths && logEntry.paths.length > 0) {
+                this._log(`获取 ${logEntry.paths.length} 个文件的差异信息`);
+                
+                // 确定要分析的文件列表
+                let filesToAnalyze = logEntry.paths;
+                
+                // 如果提供了可见文件列表，只分析可见的文件
+                if (visibleFiles && visibleFiles.length > 0) {
+                    const visibleFilePaths = new Set(visibleFiles.map(f => f.path));
+                    filesToAnalyze = logEntry.paths.filter(pathInfo => visibleFilePaths.has(pathInfo.path));
+                    this._log(`根据可见文件过滤，从 ${logEntry.paths.length} 个文件减少到 ${filesToAnalyze.length} 个文件`);
+                }
+                
+                // 应用文件类型过滤，排除二进制文件和无法分析的文件
+                filteredFiles = filesToAnalyze.filter(pathInfo => {
+                    const shouldExclude = this._shouldExcludeFromAIAnalysis(pathInfo.path);
+                    if (shouldExclude) {
+                        this._log(`排除文件: ${pathInfo.path} (二进制或无法分析的文件类型)`);
+                    }
+                    return !shouldExclude;
+                });
+                
+                this._log(`应用文件类型过滤后，从 ${filesToAnalyze.length} 个文件减少到 ${filteredFiles.length} 个文件`);
+                
+                if (filteredFiles.length === 0) {
+                    throw new Error('没有可分析的文件（所有文件都被过滤排除）');
+                }
+                
+                // 收集过滤信息
+                const excludedFiles: string[] = [];
+                filesToAnalyze.forEach(pathInfo => {
+                    if (this._shouldExcludeFromAIAnalysis(pathInfo.path)) {
+                        excludedFiles.push(pathInfo.path);
+                    }
+                });
+                
+                filterInfo = {
+                    totalFiles: logEntry.paths.length,
+                    analyzedFiles: filteredFiles.length,
+                    excludedFiles: excludedFiles
+                };
+                
+                for (const pathInfo of filteredFiles) {
+                    try {
+                        // 跳过删除的文件，因为无法获取差异
+                        if (pathInfo.action === 'D') {
+                            filesDiffs.push(`文件: ${pathInfo.path} (已删除)\n删除文件: ${pathInfo.path}`);
+                            continue;
+                        }
+                        
+                        // 跳过添加的文件，因为没有前一个版本对比
+                        if (pathInfo.action === 'A') {
+                            filesDiffs.push(`文件: ${pathInfo.path} (新增)\n新增文件: ${pathInfo.path}`);
+                            continue;
+                        }
+                        
+                        // 对于修改的文件，获取差异
+                        if (pathInfo.action === 'M') {
+                            const diff = await this._getFileDiffForRevision(pathInfo.path, revision);
+                            if (diff) {
+                                filesDiffs.push(`文件: ${pathInfo.path} (已修改)\n${diff}`);
+                            }
+                        }
+                    } catch (error: any) {
+                        this._log(`获取文件 ${pathInfo.path} 的差异失败: ${error.message}`);
+                        filesDiffs.push(`文件: ${pathInfo.path}\n无法获取差异信息: ${error.message}`);
+                    }
+                }
+            } else {
+                throw new Error('该修订版本没有文件变更信息');
+            }
+            
+            if (filesDiffs.length === 0) {
+                throw new Error('没有可分析的文件差异');
+            }
+            
+            // 获取当前AI模型配置
+            const config = vscode.workspace.getConfiguration('vscode-svn');
+            const aiModel = config.get<string>('aiModel') || 'qwen';
+            
+            // 生成缓存ID
+            const cacheId = this.aiCacheService.generateCacheId(revision, filesDiffs, aiModel);
+            this._log(`生成缓存ID: ${cacheId.substring(0, 16)}...`);
+            
+            // 检查缓存
+            const cachedDetails = this.aiCacheService.getCachedAnalysisWithDetails(cacheId);
+            if (cachedDetails && !force) {
+                this._log(`使用缓存的分析结果，跳过AI调用`);
+                
+                // 创建新的webview面板显示缓存的AI分析结果
+                await this._showAIAnalysisResult(revision, logEntry, cachedDetails.result, true, cachedDetails.cacheDate, filterInfo, filteredFiles);
+                
+                // 隐藏加载状态
+                this._panel.webview.postMessage({ command: 'setLoading', value: false });
+                
+                // 通知前端AI分析完成，恢复按钮状态
+                this._panel.webview.postMessage({ command: 'aiAnalysisComplete' });
+                
+                return;
+            }
+            
+            // 缓存未命中或强制重新分析，调用AI分析
+            if (force) {
+                this._log(`强制重新分析，跳过缓存`);
+            } else {
+                this._log(`缓存未命中，调用AI进行分析`);
+            }
+            
+            // 合并所有文件的差异信息
+            const combinedDiff = filesDiffs.join('\n\n');
+            this._log(`准备发送给AI分析的差异信息长度: ${combinedDiff.length}`);
+            
+            // 使用AI分析差异
+            const analysisResult = await this.aiService.generateCommitMessage(combinedDiff);
+            
+            if (!analysisResult) {
+                throw new Error('AI分析返回空结果');
+            }
+            
+            this._log(`AI分析完成，结果长度: ${analysisResult.length}`);
+            
+            // 缓存分析结果
+            this.aiCacheService.cacheAnalysis(cacheId, revision, filesDiffs, analysisResult, aiModel);
+            this._log(`已缓存分析结果`);
+            
+            // 创建新的webview面板显示AI分析结果
+            await this._showAIAnalysisResult(revision, logEntry, analysisResult, false, undefined, filterInfo, filteredFiles);
+            
+            // 隐藏加载状态
+            this._panel.webview.postMessage({ command: 'setLoading', value: false });
+            
+            // 通知前端AI分析完成，恢复按钮状态
+            this._panel.webview.postMessage({ command: 'aiAnalysisComplete' });
+            
+        } catch (error: any) {
+            this._log(`AI分析修订版本失败: ${error.message}`);
+            vscode.window.showErrorMessage(`AI分析失败: ${error.message}`);
+            this._panel.webview.postMessage({ command: 'setLoading', value: false });
+            
+            // 即使出错也要恢复按钮状态
+            this._panel.webview.postMessage({ command: 'aiAnalysisComplete' });
+            
+            // 重新抛出异常，让调用者知道分析失败了
+            throw error;
+        }
+    }
+
+    /**
+     * 获取指定文件在指定修订版本的差异
+     */
+    private async _getFileDiffForRevision(filePath: string, revision: string): Promise<string> {
+        try {
+            const prevRevision = parseInt(revision) - 1;
+            this._log(`获取文件差异: ${filePath}, 版本 ${prevRevision}:${revision}`);
+            
+            // 首先尝试获取SVN仓库URL
+            let repoUrl = '';
+            const workingDir = path.dirname(this._targetPath);
+            
+            try {
+                const infoCommand = `info --xml "${this._targetPath}"`;
+                const infoXml = await this.svnService.executeSvnCommand(infoCommand, workingDir, false);
+                
+                const urlMatch = /<url>(.*?)<\/url>/s.exec(infoXml);
+                if (urlMatch && urlMatch[1]) {
+                    const fullUrl = urlMatch[1];
+                    if (fullUrl.includes('/trunk/')) {
+                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/trunk/'));
+                    } else if (fullUrl.includes('/branches/')) {
+                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/branches/'));
+                    } else if (fullUrl.includes('/tags/')) {
+                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/tags/'));
+                    } else {
+                        repoUrl = fullUrl;
+                    }
+                    this._log(`获取到仓库URL: ${repoUrl}`);
+                }
+            } catch (error: any) {
+                this._log(`获取仓库URL失败: ${error.message}`);
+            }
+            
+            // 尝试使用不同的命令格式获取差异
+            const commands = [
+                // 使用完整URL路径的diff命令
+                repoUrl ? `diff -r ${prevRevision}:${revision} "${repoUrl}${filePath}"` : '',
+                // 使用相对路径的diff命令
+                `diff -r ${prevRevision}:${revision} "${filePath}"`,
+                // 使用分离的版本参数
+                `diff -r ${prevRevision} -r ${revision} "${filePath}"`,
+                // 尝试使用URL直接比较（如果有仓库URL）
+                repoUrl ? `diff "${repoUrl}${filePath}@${prevRevision}" "${repoUrl}${filePath}@${revision}"` : ''
+            ].filter(cmd => cmd);
+            
+            this._log(`准备尝试 ${commands.length} 个不同的diff命令`);
+            
+            for (let i = 0; i < commands.length; i++) {
+                const cmd = commands[i];
+                try {
+                    this._log(`[${i + 1}/${commands.length}] 尝试命令: ${cmd}`);
+                    const diff = await this.svnService.executeSvnCommand(cmd, workingDir, false);
+                    
+                    this._log(`命令执行完成，返回内容长度: ${diff ? diff.length : 0}`);
+                    
+                    if (diff && diff.trim() !== '') {
+                        // 检查是否是有效的diff输出
+                        if (diff.includes('Index:') || diff.includes('@@') || diff.includes('---') || diff.includes('+++')) {
+                            this._log(`命令 "${cmd}" 成功获取有效差异信息，长度: ${diff.length}`);
+                            return diff;
+                        } else {
+                            this._log(`命令 "${cmd}" 返回内容但不是标准diff格式，内容预览: ${diff.substring(0, 200)}...`);
+                        }
+                    } else {
+                        this._log(`命令 "${cmd}" 返回空内容或空白内容`);
+                    }
+                } catch (error: any) {
+                    this._log(`命令 "${cmd}" 执行失败: ${error.message}`);
+                    // 继续尝试下一个命令
+                }
+            }
+            
+            // 如果所有diff命令都失败，尝试获取文件内容进行手动比较
+            this._log('所有diff命令都失败，尝试获取文件内容进行手动比较');
+            
+            try {
+                if (repoUrl) {
+                    this._log('尝试获取两个版本的文件内容进行比较');
+                    
+                    // 获取前一个版本的文件内容
+                    const prevContentCmd = `cat "${repoUrl}${filePath}@${prevRevision}"`;
+                    this._log(`获取前一版本内容: ${prevContentCmd}`);
+                    const prevContent = await this.svnService.executeSvnCommand(prevContentCmd, workingDir, false);
+                    
+                    // 获取当前版本的文件内容
+                    const currentContentCmd = `cat "${repoUrl}${filePath}@${revision}"`;
+                    this._log(`获取当前版本内容: ${currentContentCmd}`);
+                    const currentContent = await this.svnService.executeSvnCommand(currentContentCmd, workingDir, false);
+                    
+                    if (prevContent !== undefined && currentContent !== undefined) {
+                        // 简单的内容比较
+                        if (prevContent === currentContent) {
+                            this._log('两个版本的文件内容相同，没有差异');
+                            return '文件内容没有变化';
+                        } else {
+                            this._log(`文件内容有差异，前一版本长度: ${prevContent.length}, 当前版本长度: ${currentContent.length}`);
+                            
+                            // 创建简单的差异描述
+                            const diffDescription = `文件: ${filePath}\n` +
+                                `版本 ${prevRevision} 长度: ${prevContent.length} 字符\n` +
+                                `版本 ${revision} 长度: ${currentContent.length} 字符\n` +
+                                `差异: ${currentContent.length - prevContent.length > 0 ? '+' : ''}${currentContent.length - prevContent.length} 字符\n\n` +
+                                `前一版本内容预览:\n${prevContent.substring(0, 500)}${prevContent.length > 500 ? '...' : ''}\n\n` +
+                                `当前版本内容预览:\n${currentContent.substring(0, 500)}${currentContent.length > 500 ? '...' : ''}`;
+                            
+                            return diffDescription;
+                        }
+                    }
+                }
+            } catch (error: any) {
+                this._log(`获取文件内容进行比较失败: ${error.message}`);
+            }
+            
+            this._log('所有获取差异的方法都失败了');
+            return `无法获取文件差异信息: ${filePath}\n- 文件差异信息不可用，无法详细分析具体修改内容。`;
+        } catch (error: any) {
+            this._log(`获取文件差异失败: ${error.message}`);
+            return `获取差异失败: ${error.message}\n文件: ${filePath}`;
+        }
+    }
+
+    /**
+     * 显示AI分析结果
+     */
+    private async _showAIAnalysisResult(revision: string, logEntry: SvnLogEntry, analysisResult: string, fromCache: boolean, cacheDate?: string, filterInfo?: { totalFiles: number; analyzedFiles: number; excludedFiles: string[] }, analyzedFiles?: SvnLogPath[]) {
+        try {
+            // 创建新的webview面板显示AI分析结果
+            const panel = vscode.window.createWebviewPanel(
+                'svnAIAnalysis',
+                `AI分析: 修订版本 ${revision}`,
+                vscode.ViewColumn.Beside,
+                {
+                    enableScripts: true,
+                    retainContextWhenHidden: true
+                }
+            );
+
+            // 设置HTML内容
+            panel.webview.html = this._getAIAnalysisHtml(revision, logEntry, analysisResult, fromCache, cacheDate, filterInfo, analyzedFiles);
+            
+            // 设置消息处理器，处理来自webview的消息
+            panel.webview.onDidReceiveMessage(
+                async (message) => {
+                    switch (message.command) {
+                        case 'forceAnalyzeRevisionWithAI':
+                            this._log(`收到强制重新分析请求: ${message.revision}`);
+                            
+                            try {
+                                // 先执行重新分析，成功后再关闭当前面板
+                                if (message.filteredFiles && message.filteredFiles.length > 0) {
+                                    this._log(`使用过滤后的文件列表进行重新分析，文件数量: ${message.filteredFiles.length}`);
+                                    await this._analyzeRevisionWithAI(message.revision, true, message.filteredFiles);
+                                } else {
+                                    this._log(`使用全量文件进行重新分析`);
+                                    await this._analyzeRevisionWithAI(message.revision, true);
+                                }
+                                
+                                // 重新分析成功后关闭当前面板
+                                panel.dispose();
+                            } catch (error: any) {
+                                this._log(`重新分析失败: ${error.message}`);
+                                vscode.window.showErrorMessage(`重新分析失败: ${error.message}`);
+                                
+                                // 重新启用按钮
+                                panel.webview.postMessage({
+                                    command: 'enableRefreshButton'
+                                });
+                            }
+                            break;
+                        case 'analyzeRevisionWithAIFiltered':
+                            this._log(`AI分析修订版本(仅显示文件): ${message.revision}, 显示文件数量: ${message.visibleFiles?.length || 0}`);
+                            await this._analyzeRevisionWithAI(message.revision, false, message.visibleFiles);
+                            break;
+                    }
+                },
+                null,
+                this._disposables
+            );
+            
+            this._log('AI分析结果面板已创建');
+        } catch (error: any) {
+            this._log(`显示AI分析结果失败: ${error.message}`);
+            vscode.window.showErrorMessage(`显示AI分析结果失败: ${error.message}`);
+        }
+    }
+
+    /**
+     * 生成AI分析结果的HTML
+     */
+    private _getAIAnalysisHtml(revision: string, logEntry: SvnLogEntry, analysisResult: string, fromCache: boolean, cacheDate?: string, filterInfo?: { totalFiles: number; analyzedFiles: number; excludedFiles: string[] }, analyzedFiles?: SvnLogPath[]): string {
+        // 转义HTML特殊字符
+        const escapeHtml = (text: string) => {
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        };
+
+        const escapedAnalysis = escapeHtml(analysisResult);
+        const escapedMessage = escapeHtml(logEntry.message);
+
+        return `<!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+            <title>AI分析: 修订版本 ${revision}</title>
+            <style>
+                body {
+                    font-family: var(--vscode-font-family);
+                    font-size: var(--vscode-font-size);
+                    color: var(--vscode-foreground);
+                    background-color: var(--vscode-editor-background);
+                    padding: 20px;
+                    line-height: 1.6;
+                }
+                .header {
+                    border-bottom: 1px solid var(--vscode-panel-border);
+                    padding-bottom: 15px;
+                    margin-bottom: 20px;
+                }
+                .revision-info {
+                    background-color: var(--vscode-textBlockQuote-background);
+                    border-left: 4px solid var(--vscode-textBlockQuote-border);
+                    padding: 15px;
+                    margin-bottom: 20px;
+                }
+                .revision-title {
+                    font-size: 1.4em;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    color: var(--vscode-textLink-foreground);
+                }
+                .revision-meta {
+                    display: grid;
+                    grid-template-columns: auto 1fr;
+                    gap: 10px;
+                    margin-bottom: 15px;
+                }
+                .meta-label {
+                    font-weight: bold;
+                    color: var(--vscode-descriptionForeground);
+                }
+                .original-message {
+                    background-color: var(--vscode-input-background);
+                    border: 1px solid var(--vscode-input-border);
+                    padding: 10px;
+                    border-radius: 4px;
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                }
+                .ai-analysis {
+                    background-color: var(--vscode-editor-background);
+                    border: 1px solid var(--vscode-panel-border);
+                    border-radius: 6px;
+                    padding: 20px;
+                }
+                .ai-title {
+                    font-size: 1.2em;
+                    font-weight: bold;
+                    margin-bottom: 15px;
+                    color: var(--vscode-textLink-foreground);
+                    display: flex;
+                    align-items: center;
+                }
+                .ai-icon {
+                    margin-right: 8px;
+                    font-size: 1.1em;
+                }
+                .ai-content {
+                    white-space: pre-wrap;
+                    word-break: break-word;
+                    line-height: 1.7;
+                    background-color: var(--vscode-textCodeBlock-background);
+                    padding: 15px;
+                    border-radius: 4px;
+                    border-left: 3px solid var(--vscode-textLink-foreground);
+                }
+                .file-count {
+                    color: var(--vscode-descriptionForeground);
+                    font-size: 0.9em;
+                    margin-top: 10px;
+                }
+                .copy-button {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    margin-top: 15px;
+                    font-size: 0.9em;
+                }
+                .copy-button:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+                .cache-notice {
+                    background-color: var(--vscode-inputValidation-infoBackground);
+                    border: 1px solid var(--vscode-inputValidation-infoBorder);
+                    border-radius: 6px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                }
+                .cache-info {
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                .cache-icon {
+                    font-size: 1.5em;
+                    color: var(--vscode-notificationsInfoIcon-foreground);
+                }
+                .cache-text {
+                    flex: 1;
+                }
+                .cache-title {
+                    font-weight: bold;
+                    color: var(--vscode-notificationsInfoIcon-foreground);
+                    margin-bottom: 5px;
+                }
+                .cache-date {
+                    font-size: 0.9em;
+                    color: var(--vscode-descriptionForeground);
+                }
+                .refresh-button {
+                    background-color: var(--vscode-button-secondaryBackground);
+                    color: var(--vscode-button-secondaryForeground);
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 0.9em;
+                    white-space: nowrap;
+                }
+                .refresh-button:hover {
+                    background-color: var(--vscode-button-secondaryHoverBackground);
+                }
+                .real-time-notice {
+                    background-color: var(--vscode-inputValidation-warningBackground);
+                    border: 1px solid var(--vscode-inputValidation-warningBorder);
+                    border-radius: 6px;
+                    padding: 15px;
+                    margin-bottom: 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                .real-time-icon {
+                    font-size: 1.5em;
+                    color: var(--vscode-notificationsWarningIcon-foreground);
+                }
+                .real-time-text {
+                    color: var(--vscode-notificationsWarningIcon-foreground);
+                    font-weight: bold;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>🤖 AI代码分析报告</h1>
+            </div>
+            
+            ${fromCache ? `
+            <div class="cache-notice">
+                <div class="cache-info">
+                    <div class="cache-icon">💾</div>
+                    <div class="cache-text">
+                        <div class="cache-title">缓存结果 - 节省了API调用费用</div>
+                        <div class="cache-date">缓存时间: ${cacheDate || '未知'}</div>
+                    </div>
+                </div>
+                <button class="refresh-button" onclick="forceRefresh()">🔄 重新分析</button>
+            </div>
+            ` : `
+            <div class="real-time-notice">
+                <div class="real-time-icon">🔄</div>
+                <div class="real-time-text">实时AI分析结果</div>
+            </div>
+            `}
+            
+            <div class="revision-info">
+                <div class="revision-title">修订版本 ${revision}</div>
+                <div class="revision-meta">
+                    <span class="meta-label">作者:</span>
+                    <span>${logEntry.author}</span>
+                    <span class="meta-label">日期:</span>
+                    <span>${logEntry.date}</span>
+                    <span class="meta-label">原始提交信息:</span>
+                    <div class="original-message">${escapedMessage}</div>
+                </div>
+                ${logEntry.paths ? `<div class="file-count">📁 涉及 ${logEntry.paths.length} 个文件</div>` : ''}
+                ${filterInfo ? `
+                <div class="filter-info" style="margin-top: 10px; padding: 10px; background-color: var(--vscode-inputValidation-infoBackground); border-left: 3px solid var(--vscode-notificationsInfoIcon-foreground); border-radius: 4px;">
+                    <div style="font-weight: bold; color: var(--vscode-notificationsInfoIcon-foreground); margin-bottom: 5px;">📊 分析范围</div>
+                    <div style="font-size: 0.9em; color: var(--vscode-foreground);">
+                        <div>• 总文件数: ${filterInfo.totalFiles}</div>
+                        <div>• 已分析文件: ${filterInfo.analyzedFiles}</div>
+                        ${filterInfo.excludedFiles.length > 0 ? `<div>• 已排除文件: ${filterInfo.excludedFiles.length} 个 (${filterInfo.excludedFiles.slice(0, 3).join(', ')}${filterInfo.excludedFiles.length > 3 ? '...' : ''})</div>` : ''}
+                        ${filterInfo.analyzedFiles < filterInfo.totalFiles ? '<div style="color: var(--vscode-descriptionForeground); font-style: italic;">* 已自动排除二进制文件和不相关文件</div>' : ''}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+            
+            <div class="ai-analysis">
+                <div class="ai-title">
+                    <span class="ai-icon">🧠</span>
+                    AI智能分析结果
+                </div>
+                <div class="ai-content">${escapedAnalysis}</div>
+                <button class="copy-button" onclick="copyAnalysis()">📋 复制分析结果</button>
+            </div>
+            
+            <script>
+                // 存储当前分析时使用的过滤文件信息
+                const currentFilterInfo = ${filterInfo ? JSON.stringify(filterInfo) : 'null'};
+                const logEntryPaths = ${logEntry.paths ? JSON.stringify(logEntry.paths) : '[]'};
+                const analyzedFiles = ${analyzedFiles ? JSON.stringify(analyzedFiles) : 'null'};
+                
+                // 监听来自扩展的消息
+                window.addEventListener('message', event => {
+                    const message = event.data;
+                    switch (message.command) {
+                        case 'enableRefreshButton':
+                            // 重新启用重新分析按钮
+                            const button = document.querySelector('.refresh-button');
+                            if (button) {
+                                button.disabled = false;
+                                button.textContent = '🔄 重新分析';
+                            }
+                            break;
+                    }
+                });
+                
+                function copyAnalysis() {
+                    const analysisText = \`${analysisResult.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+                    navigator.clipboard.writeText(analysisText).then(() => {
+                        const button = document.querySelector('.copy-button');
+                        const originalText = button.textContent;
+                        button.textContent = '✅ 已复制';
+                        setTimeout(() => {
+                            button.textContent = originalText;
+                        }, 2000);
+                    }).catch(err => {
+                        console.error('复制失败:', err);
+                        alert('复制失败，请手动选择文本复制');
+                    });
+                }
+                
+                function forceRefresh() {
+                    // 使用VSCode webview API发送强制重新分析的消息
+                    const vscode = acquireVsCodeApi();
+                    
+                    // 如果有实际分析的文件列表，直接使用它
+                    let filteredFiles = null;
+                    if (analyzedFiles && analyzedFiles.length > 0) {
+                        // 直接使用之前分析时的文件列表
+                        filteredFiles = analyzedFiles;
+                        console.log('重新分析时使用之前分析的文件列表，文件数量:', filteredFiles.length);
+                    } else if (currentFilterInfo && logEntryPaths && logEntryPaths.length > 0) {
+                        // 重新计算过滤后的文件列表（排除二进制文件等）
+                        const excludedExtensions = [
+                            '.exe', '.dll', '.so', '.dylib', '.bin', '.dat',
+                            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.ico', '.svg', '.webp',
+                            '.mp3', '.mp4', '.avi', '.mov', '.wmv', '.flv', '.wav', '.ogg',
+                            '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2',
+                            '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.xlsm',
+                            '.jar', '.war', '.ear', '.class', '.pyc', '.pyo',
+                            '.ttf', '.otf', '.woff', '.woff2', '.eot',
+                            '.db', '.sqlite', '.mdb', '.accdb'
+                        ];
+                        
+                        const excludedPatterns = [
+                            /^\\./,
+                            /node_modules/,
+                            /\\.git/,
+                            /\\.svn/,
+                            /build\\//,
+                            /dist\\//,
+                            /target\\//,
+                            /\\.idea\\//,
+                            /\\.vscode\\//,
+                            /\\.DS_Store/,
+                            /Thumbs\\.db/,
+                            /\\.log$/,
+                            /\\.tmp$/,
+                            /\\.temp$/
+                        ];
+                        
+                        function shouldExcludeFile(filePath) {
+                            // 检查文件扩展名
+                            const extension = filePath.toLowerCase().substring(filePath.lastIndexOf('.'));
+                            if (excludedExtensions.includes(extension)) {
+                                return true;
+                            }
+                            
+                            // 检查文件路径模式
+                            for (const pattern of excludedPatterns) {
+                                if (pattern.test(filePath)) {
+                                    return true;
+                                }
+                            }
+                            
+                            return false;
+                        }
+                        
+                        // 过滤文件列表
+                        filteredFiles = logEntryPaths.filter(pathInfo => !shouldExcludeFile(pathInfo.path));
+                        
+                        console.log('重新分析时使用过滤后的文件列表，文件数量:', filteredFiles.length);
+                    }
+                    
+                    vscode.postMessage({
+                        command: 'forceAnalyzeRevisionWithAI',
+                        revision: '${revision}',
+                        filteredFiles: filteredFiles
+                    });
+                    
+                    // 禁用按钮并显示加载状态
+                    const button = document.querySelector('.refresh-button');
+                    if (button) {
+                        button.disabled = true;
+                        button.textContent = '🔄 重新分析中...';
+                    }
+                    
+                    // 显示提示信息
+                    if (filteredFiles && filteredFiles.length > 0) {
+                        alert(\`正在重新分析 \${filteredFiles.length} 个过滤后的文件，请稍候...\`);
+                    } else {
+                        alert('正在重新分析全部文件，请稍候...');
+                    }
+                }
+            </script>
+        </body>
+        </html>`;
+    }
+
+    /**
+     * 检查文件是否应该被AI分析排除
+     */
+    private _shouldExcludeFromAIAnalysis(filePath: string): boolean {
+        // 检查文件扩展名
+        const extension = path.extname(filePath).toLowerCase();
+        if (SvnLogPanel.EXCLUDED_EXTENSIONS.includes(extension)) {
+            return true;
+        }
+
+        // 检查文件路径模式
+        for (const pattern of SvnLogPanel.EXCLUDED_PATTERNS) {
+            if (pattern.test(filePath)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

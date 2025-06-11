@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVN日志: {{TARGET_NAME}}</title>
+    <link rel="stylesheet" href="{{STYLE_URI}}">
+</head>
+<body>
+    <div class="toolbar">
+        <div>
+            <button id="refreshButton">刷新</button>
+        </div>
+        <div>
+            <span>SVN日志: {{TARGET_NAME}}</span>
+            <span id="logCountInfo" class="log-count-info" style="margin-left: 10px; color: var(--vscode-descriptionForeground); font-size: 0.9em;"></span>
+        </div>
+    </div>
+    
+    <!-- 本地版本信息 -->
+    <div class="local-revision-info" id="localRevisionInfo" style="display: none;">
+        <div>
+            <span class="local-revision-label">本地修订版本:</span>
+            <span id="localRevisionNumber">--</span>
+        </div>
+        <div>
+            <span>橙色边框表示该版本尚未更新到本地</span>
+        </div>
+    </div>
+    
+    <!-- 日志筛选表单 -->
+    <div class="filter-form">
+        <div class="filter-mode-toggle">
+            <label class="filter-label">
+                <input type="checkbox" id="dateFilterToggle" class="filter-checkbox">
+                <span>使用日期筛选</span>
+            </label>
+        </div>
+        
+        <!-- 修订版本筛选区域 -->
+        <div id="revisionFilterSection">
+            <div class="filter-group">
+                <span class="filter-label">修订版本:</span>
+                <input type="text" id="revisionFilter" class="filter-input" placeholder="如: 100 或 100:200">
+            </div>
+        </div>
+        
+        <!-- 日期筛选区域 -->
+        <div id="dateFilterSection" style="display: none;">
+            <div class="filter-group">
+                <span class="filter-label">起始日期:</span>
+                <input type="date" id="startDateFilter" class="filter-input">
+            </div>
+            <div class="filter-group">
+                <span class="filter-label">结束日期:</span>
+                <input type="date" id="endDateFilter" class="filter-input">
+            </div>
+        </div>
+        
+        <div class="filter-group">
+            <span class="filter-label">作者:</span>
+            <input type="text" id="authorFilter" class="filter-input" placeholder="作者名称">
+        </div>
+        <div class="filter-group">
+            <span class="filter-label">内容:</span>
+            <input type="text" id="contentFilter" class="filter-input" placeholder="日志内容">
+        </div>
+        <button id="filterButton" class="filter-button">筛选</button>
+        <button id="clearFilterButton" class="filter-button filter-clear">清除</button>
+        <div class="filter-result" id="filterResult"></div>
+    </div>
+    
+    <div class="container">
+        <div class="log-list" id="logList">
+            <!-- 日志列表头部信息 -->
+            <div class="log-list-header" id="logListHeader" style="display: none; padding: 10px; border-bottom: 1px solid var(--vscode-panel-border); background-color: var(--vscode-editor-background); position: sticky; top: 0; z-index: 10;">
+                <div class="log-count-summary" id="logCountSummary" style="font-weight: bold; color: var(--vscode-foreground);"></div>
+                <div class="log-filter-status" id="logFilterStatus" style="font-size: 0.9em; color: var(--vscode-descriptionForeground); margin-top: 3px;"></div>
+            </div>
+            
+            <div class="empty-state">
+                <div class="empty-icon">📋</div>
+                <div>加载中，请稍候...</div>
+            </div>
+        </div>
+        <div class="log-details" id="logDetails">
+            <div class="empty-state">
+                <div class="empty-icon">📝</div>
+                <div>请选择一个日志条目查看详情</div>
+            </div>
+        </div>
+    </div>
+    <div class="loading" id="loading">
+        <div class="loading-text">加载中...</div>
+    </div>
+    
+    <script src="{{SCRIPT_URI}}"></script>
+</body>
+</html> 
