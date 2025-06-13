@@ -3334,7 +3334,7 @@ export class SvnLogPanel {
                             '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.pdf', '.xlsm',
                             '.jar', '.war', '.ear', '.class', '.pyc', '.pyo',
                             '.ttf', '.otf', '.woff', '.woff2', '.eot',
-                            '.db', '.sqlite', '.mdb', '.accdb'
+                            '.db', '.sqlite', '.mdb', '.accdb','.meta',
                         ];
                         
                         const excludedPatterns = [

@@ -5,8 +5,9 @@ import * as https from 'https';
  * AI服务类，用于生成SVN提交日志
  */
 export class AiService {
-  private static readonly OPENAI_API_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
-  private static readonly QWEN_API_ENDPOINT = 'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation';
+  private static readonly OPENAI_API_ENDPOINT = 'https://lumos-test.diandian.info/winky/openai/v1/chat/completions';
+  
+  private static readonly QWEN_API_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completionsn';
   // 设置不同模型的最大差异长度限制
   private static readonly MAX_DIFF_LENGTH = {
     openai: 12000,  // GPT-3.5 约 4096 tokens，按平均一个token 3个字符计算
@@ -18,6 +19,7 @@ export class AiService {
   private static readonly DEFAULT_OPENAI_API_KEY = 'sk-yyyyy'; // 替换为您的默认OpenAI API密钥
 
   private aiModel: string;
+  private openaiModel: string;
   private openaiApiKey: string | undefined;
   private qwenApiKey: string | undefined;
   private outputChannel: vscode.OutputChannel;
@@ -26,6 +28,7 @@ export class AiService {
     // 从设置中获取配置
     const config = vscode.workspace.getConfiguration('vscode-svn');
     this.aiModel = config.get<string>('aiModel') || 'qwen'; // 默认使用通义千问
+    this.openaiModel = config.get<string>('openaiModel') || 'gpt-4.1'; // 新增OpenAI模型名配置
     
     // 优先使用配置的API密钥，如果没有则使用默认值
     const configOpenaiKey = config.get<string>('aiApiKey');
@@ -188,20 +191,22 @@ ${truncatedDiff}
    */
   private callOpenAiApi(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
+      // 读取最新的模型配置，支持运行时切换
+      const config = vscode.workspace.getConfiguration('vscode-svn');
+      const model = config.get<string>('openaiModel') || this.openaiModel || 'gpt-4.1';
       const requestData = JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: model, // 使用可配置的模型名
         messages: [
           {
             role: 'system',
-            content: '你是一个专业的SVN提交日志生成助手。你的任务是根据SVN差异内容生成详细的提交日志。你应该按文件名分段落输出，每个文件的修改内容单独一段。每个文件段落应包含修改内容、目的和影响。使用中文，保持适中的详细程度。'
+            content: '你是一个专业全栈工程师。你的任务是根据SVN差异内容生成详细的提交日志。你应该按文件名分段落输出，每个文件的修改内容单独一段。整理收到的内容，精简整理后显示修改内容.每个文件段落应包含修改内容、目的和影响。使用中文，保持适中的详细程度。'
           },
           {
             role: 'user',
             content: prompt
           }
         ],
-        max_tokens: 150,
-        temperature: 0.7
+        // max_completion_tokens: 4096,
       });
       
       const options = {
@@ -251,7 +256,7 @@ ${truncatedDiff}
   private callQwenApi(prompt: string): Promise<string> {
     return new Promise((resolve, reject) => {
       const requestData = JSON.stringify({
-        model: 'qwen-turbo',
+        model: 'qwen-turbo-latest',
         input: {
           prompt: prompt
         },
@@ -282,16 +287,27 @@ ${truncatedDiff}
               const message = response.output.text.trim();
               resolve(message);
             } else {
-              reject(new Error(`API请求失败，状态码: ${res.statusCode}, 响应: ${data}`));
+              // 非200响应时打印requestData
+              this.outputChannel.appendLine(`[callQwenApi] API请求失败，状态码: ${res.statusCode}`);
+              this.outputChannel.appendLine(`[callQwenApi] 请求数据: ${requestData}`);
+              this.outputChannel.appendLine(`[callQwenApi] 响应内容: ${data}`);
+              reject(new Error(`API请求失败，状态码: ${res.statusCode}, 响应: ${data}\n请求数据: ${requestData}`));
             }
           } catch (error) {
-            reject(error);
+            // 解析响应失败时打印requestData
+            this.outputChannel.appendLine(`[callQwenApi] 响应解析失败: ${(error as Error).message}`);
+            this.outputChannel.appendLine(`[callQwenApi] 请求数据: ${requestData}`);
+            this.outputChannel.appendLine(`[callQwenApi] 响应内容: ${data}`);
+            reject(new Error(`响应解析失败: ${(error as Error).message}\n请求数据: ${requestData}`));
           }
         });
       });
       
       req.on('error', (error) => {
-        reject(error);
+        // 网络错误时打印requestData
+        this.outputChannel.appendLine(`[callQwenApi] 网络错误: ${error.message}`);
+        this.outputChannel.appendLine(`[callQwenApi] 请求数据: ${requestData}`);
+        reject(new Error(`网络错误: ${error.message}\n请求数据: ${requestData}`));
       });
       
       req.write(requestData);
