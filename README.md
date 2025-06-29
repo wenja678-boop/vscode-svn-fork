@@ -101,16 +101,42 @@
    - 重置为默认配置
 6. **查看过滤信息**：通过命令面板执行"SVN: 显示过滤信息"查看当前的过滤配置
 
-### 设置AI模型和API密钥
-1. 打开VSCode设置（文件 > 首选项 > 设置）
-2. 搜索"vscode-svn.aiModel"，选择要使用的AI模型（OpenAI 或 通义千问）
-3. 如果选择OpenAI：
-   - 搜索"vscode-svn.aiApiKey"
-   - 输入您的OpenAI API密钥
-4. 如果选择通义千问：
-   - 搜索"vscode-svn.qwenApiKey"
-   - 输入您的通义千问API密钥（在通义千问控制台获取）
-5. 您也可以在首次使用AI生成提交日志功能时，根据提示设置相应的密钥
+### AI配置
+插件支持接入任何兼容OpenAI格式的AI服务，包括但不限于：
+- OpenAI GPT系列
+- 通义千问
+- 文心一言
+- 智谱AI
+- 本地部署的LLM服务等
+
+#### 配置方式
+1. **首次使用自动引导**：
+   - 首次使用AI功能时，系统会自动弹出配置引导
+   - 按照提示依次输入API地址、模型ID和API密钥即可
+
+2. **手动配置**：
+   - 打开VSCode设置（文件 > 首选项 > 设置）
+   - 搜索"vscode-svn.ai"查看所有AI相关配置
+   - 配置以下三个必需项：
+     - `vscode-svn.aiApiUrl`：AI服务的API访问地址
+     - `vscode-svn.aiModelId`：AI模型ID或名称  
+     - `vscode-svn.aiApiKey`：AI服务的API密钥
+
+#### 配置示例
+**OpenAI GPT：**
+- API地址：`https://api.openai.com/v1/chat/completions`
+- 模型ID：`gpt-3.5-turbo` 或 `gpt-4`
+- API密钥：`sk-...`
+
+**通义千问：**
+- API地址：`https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation`
+- 模型ID：`qwen-turbo` 或 `qwen-plus`
+- API密钥：`sk-...`
+
+**本地服务：**
+- API地址：`http://localhost:8000/v1/chat/completions`
+- 模型ID：根据本地服务配置
+- API密钥：根据本地服务要求
 
 ### 更新文件
 1. 在资源管理器或编辑器中右键点击文件

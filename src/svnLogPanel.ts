@@ -2787,12 +2787,8 @@ export class SvnLogPanel {
                 throw new Error('没有可分析的文件差异');
             }
             
-            // 获取当前AI模型配置
-            const config = vscode.workspace.getConfiguration('vscode-svn');
-            const aiModel = config.get<string>('aiModel') || 'qwen';
-            
             // 生成缓存ID
-            const cacheId = this.aiCacheService.generateCacheId(revision, filesDiffs, aiModel);
+            const cacheId = this.aiCacheService.generateCacheId(revision, filesDiffs);
             this._log(`生成缓存ID: ${cacheId.substring(0, 16)}...`);
             
             // 检查缓存
@@ -2833,7 +2829,7 @@ export class SvnLogPanel {
             this._log(`AI分析完成，结果长度: ${analysisResult.length}`);
             
             // 缓存分析结果
-            this.aiCacheService.cacheAnalysis(cacheId, revision, filesDiffs, analysisResult, aiModel);
+            this.aiCacheService.cacheAnalysis(cacheId, revision, filesDiffs, analysisResult);
             this._log(`已缓存分析结果`);
             
             // 创建新的webview面板显示AI分析结果

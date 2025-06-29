@@ -9,6 +9,7 @@ import { SvnFolderCommitPanel } from './folderCommitPanel';
 import { SvnLogPanel } from './svnLogPanel';
 import { SvnFilterService } from './filterService';
 import { AiCacheService } from './aiCacheService';
+import { AiService } from './aiService';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -754,6 +755,26 @@ async function cleanExpiredAICache(): Promise<void> {
   }
 }
 
+/**
+ * 配置AI服务
+ */
+async function configureAI(): Promise<void> {
+  try {
+    // 使用AI服务类的配置引导功能
+    const aiService = new AiService();
+    const result = await aiService.configureAI();
+    
+    if (result) {
+      vscode.window.showInformationMessage(
+        '🎉 AI服务配置完成！\n\n现在可以使用AI功能生成SVN提交日志了。',
+        { modal: true }
+      );
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`❌ 配置AI服务失败: ${error.message}`);
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -1003,6 +1024,11 @@ export function activate(context: vscode.ExtensionContext) {
     await cleanExpiredAICache();
   });
   
+  // 注册配置AI服务命令
+  const configureAICommand = vscode.commands.registerCommand('vscode-svn.configureAI', async () => {
+    await configureAI();
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -1020,7 +1046,8 @@ export function activate(context: vscode.ExtensionContext) {
     showFilterInfoCommand,
     showAICacheStatsCommand,
     clearAICacheCommand,
-    cleanExpiredAICacheCommand
+    cleanExpiredAICacheCommand,
+    configureAICommand
   );
 }
 

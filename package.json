@@ -100,6 +100,10 @@
       {
         "command": "vscode-svn.cleanExpiredAICache",
         "title": "SVN: 清理过期AI缓存"
+      },
+      {
+        "command": "vscode-svn.configureAI",
+        "title": "SVN: 配置AI服务"
       }
     ],
     "menus": {
@@ -206,6 +210,10 @@
         {
           "command": "vscode-svn.showFilterInfo",
           "group": "svn"
+        },
+        {
+          "command": "vscode-svn.configureAI",
+          "group": "svn"
         }
       ],
       "view/title": [
@@ -224,29 +232,20 @@
           "default": null,
           "description": "自定义SVN工作副本根目录路径"
         },
-        "vscode-svn.aiModel": {
+        "vscode-svn.aiApiUrl": {
           "type": "string",
-          "enum": [
-            "openai",
-            "qwen"
-          ],
-          "default": "openai",
-          "description": "选择用于生成提交日志的AI模型（OpenAI 或 通义千问）"
+          "default": "",
+          "description": "AI服务的API访问地址"
+        },
+        "vscode-svn.aiModelId": {
+          "type": "string",
+          "default": "",
+          "description": "AI模型ID或名称"
         },
         "vscode-svn.aiApiKey": {
           "type": "string",
           "default": "",
-          "description": "用于生成提交日志的OpenAI API密钥"
-        },
-        "vscode-svn.openaiModel": {
-          "type": "string",
-          "default": "gpt-4.1",
-          "description": "用于生成提交日志的OpenAI模型名称（如 gpt-3.5-turbo, gpt-4.1 等）"
-        },
-        "vscode-svn.qwenApiKey": {
-          "type": "string",
-          "default": "",
-          "description": "用于生成提交日志的通义千问API密钥"
+          "description": "AI服务的API密钥"
         },
         "vscode-svn.showUncommittedChanges": {
           "type": "boolean",

@@ -139,18 +139,18 @@ export class AiCacheService {
 
     /**
      * 生成缓存ID
-     * 基于修订版本、文件差异内容和AI模型生成唯一标识
+     * 基于修订版本、文件差异内容生成唯一标识
      */
-    public generateCacheId(revision: string, filesDiffs: string[], aiModel: string): string {
+    public generateCacheId(revision: string, filesDiffs: string[]): string {
         try {
             // 将所有文件差异内容合并并排序，确保相同内容生成相同ID
             const sortedDiffs = filesDiffs.slice().sort();
-            const combinedContent = `${revision}|${aiModel}|${sortedDiffs.join('|||')}`;
+            const combinedContent = `${revision}|${sortedDiffs.join('|||')}`;
             
             // 使用SHA-256生成哈希
             const hash = crypto.createHash('sha256').update(combinedContent, 'utf8').digest('hex');
             
-            this.outputChannel.appendLine(`生成缓存ID: ${hash.substring(0, 16)}... (修订版本: ${revision}, 文件数: ${filesDiffs.length}, 模型: ${aiModel})`);
+            this.outputChannel.appendLine(`生成缓存ID: ${hash.substring(0, 16)}... (修订版本: ${revision}, 文件数: ${filesDiffs.length})`);
             
             return hash;
         } catch (error: any) {
@@ -225,7 +225,7 @@ export class AiCacheService {
     /**
      * 缓存分析结果
      */
-    public cacheAnalysis(cacheId: string, revision: string, filesDiffs: string[], analysisResult: string, aiModel: string): void {
+    public cacheAnalysis(cacheId: string, revision: string, filesDiffs: string[], analysisResult: string): void {
         try {
             // 生成文件差异的哈希值，用于验证缓存一致性
             const filesHash = crypto.createHash('md5').update(filesDiffs.join('|||'), 'utf8').digest('hex');
@@ -236,7 +236,7 @@ export class AiCacheService {
                 filesHash: filesHash,
                 analysisResult: analysisResult,
                 timestamp: Date.now(),
-                aiModel: aiModel
+                aiModel: 'ai' // 简化为通用标识
             };
             
             this.cache.set(cacheId, entry);
