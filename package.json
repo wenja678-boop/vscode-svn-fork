@@ -1,8 +1,8 @@
 {
   "name": "vscode-svn-ai",
-  "displayName": "SVN AI 智能提交助手",
+  "displayName": "VSCode SVN",
   "description": "VSCode SVN插件，集成AI智能生成提交日志功能，支持文件差异对比、批量提交、日志查看等完整SVN操作",
-  "version": "4.7.3",
+  "version": "4.7.4",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {

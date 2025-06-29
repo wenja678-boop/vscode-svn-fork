@@ -496,6 +496,13 @@ export class SvnService {
     } catch (error: any) {
       this.outputChannel.appendLine(`错误: ${error.message}`);
       this.outputChannel.appendLine('========== SVN提交操作失败 ==========');
+      
+      // 检查是否是"out of date"错误
+      if (this.isOutOfDateError(error.message)) {
+        await this.handleOutOfDateError(fsPath, message);
+        return; // 如果用户选择了处理，则不再抛出错误
+      }
+      
       throw error;
     }
   }
@@ -816,7 +823,88 @@ export class SvnService {
     } catch (error: any) {
       this.outputChannel.appendLine(`错误: ${error.message}`);
       this.outputChannel.appendLine('========== SVN批量提交操作失败 ==========');
+      
+      // 检查是否是"out of date"错误
+      if (this.isOutOfDateError(error.message)) {
+        await this.handleOutOfDateError(basePath, message, filteredFiles);
+        return; // 如果用户选择了处理，则不再抛出错误
+      }
+      
       throw error;
+    }
+  }
+
+  /**
+   * 检查是否是"out of date"错误
+   * @param errorMessage 错误消息
+   * @returns 是否是"out of date"错误
+   */
+  private isOutOfDateError(errorMessage: string): boolean {
+    return errorMessage.includes('out of date') || 
+           errorMessage.includes('E155011') || 
+           errorMessage.includes('E170004');
+  }
+
+  /**
+   * 处理"out of date"错误
+   * @param fsPath 文件系统路径
+   * @param message 提交信息
+   * @param files 可选的文件列表（用于批量提交）
+   */
+  private async handleOutOfDateError(fsPath: string, message: string, files?: string[]): Promise<void> {
+    const result = await vscode.window.showWarningMessage(
+      'SVN提交失败：工作副本版本过时，需要先更新到最新版本后再提交',
+      {
+        modal: true,
+        detail: '这通常发生在其他人已经提交了对相同文件或文件夹的修改。\n\n建议先更新工作副本到最新版本，然后再重新提交。'
+      },
+      '自动更新并重试提交',
+      '仅更新不重试',
+      '取消'
+    );
+
+    if (result === '自动更新并重试提交') {
+      try {
+        // 先更新工作副本
+        await this.update(fsPath);
+        
+        // 显示更新成功提示
+        vscode.window.showInformationMessage('工作副本已更新到最新版本');
+        
+        // 询问是否继续提交
+        const continueResult = await vscode.window.showInformationMessage(
+          '工作副本已更新完成，是否继续提交？',
+          '继续提交',
+          '取消'
+        );
+        
+        if (continueResult === '继续提交') {
+          // 重新尝试提交
+          if (files && files.length > 0) {
+            // 批量提交
+            await this.commitFiles(files, message, fsPath);
+          } else {
+            // 单文件提交
+            await this.commit(fsPath, message);
+          }
+          
+          vscode.window.showInformationMessage('提交成功！');
+        }
+      } catch (updateError: any) {
+        vscode.window.showErrorMessage(`更新失败: ${updateError.message}`);
+        throw updateError;
+      }
+    } else if (result === '仅更新不重试') {
+      try {
+        await this.update(fsPath);
+        vscode.window.showInformationMessage('工作副本已更新到最新版本，请手动重新提交');
+      } catch (updateError: any) {
+        vscode.window.showErrorMessage(`更新失败: ${updateError.message}`);
+        throw updateError;
+      }
+    } else {
+      // 用户选择取消，抛出原始错误
+      throw new Error('SVN提交失败：工作副本版本过时，需要先更新');
     }
   }
 }
