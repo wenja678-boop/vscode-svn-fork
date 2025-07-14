@@ -880,44 +880,79 @@ export class SvnLogPanel {
             const isSvnRepoPath = filePath.startsWith('/trunk/') || filePath.startsWith('/branches/') || filePath.startsWith('/tags/');
             this._log(`路径类型: ${isSvnRepoPath ? 'SVN仓库路径' : '本地路径'}`);
             
-            // 首先尝试获取SVN仓库URL
+            // 首先尝试获取SVN仓库信息
             let repoUrl = '';
-            let workingDir = path.dirname(this._targetPath);
+            let repoRoot = '';
+            let workingDir = this._targetPath;
+            
+            // 检测工作副本类型
+            const isRemotePath = this._targetPath.startsWith('/') && !this._targetPath.startsWith('/Users') && !this._targetPath.startsWith('/home');
+            const isWindowsPath = /^[A-Za-z]:/.test(this._targetPath);
+            this._log(`路径类型检测: 目标路径=${this._targetPath}, 远程路径=${isRemotePath}, Windows路径=${isWindowsPath}`);
+            
+            // 根据路径类型确定工作目录
+            if (fs.lstatSync(this._targetPath).isDirectory()) {
+                // 如果目标是目录，直接使用目标路径作为工作目录
+                workingDir = this._targetPath;
+                this._log(`使用目录作为工作目录: ${workingDir}`);
+            } else {
+                // 如果目标是文件，使用父目录
+                workingDir = path.dirname(this._targetPath);
+                this._log(`使用文件父目录作为工作目录: ${workingDir}`);
+            }
             
             try {
-                // 获取SVN仓库URL
+                // 获取SVN仓库URL和根URL
                 const infoCommand = `info --xml "${this._targetPath}"`;
-                this._log(`执行SVN命令获取仓库URL: ${infoCommand}`);
+                this._log(`执行SVN命令获取仓库信息: ${infoCommand} (工作目录: ${workingDir})`);
                 
                 const infoXml = await this.svnService.executeSvnCommand(infoCommand, workingDir, false);
                 
-                // 解析XML获取仓库URL
+                // 解析XML获取仓库URL和根URL
                 const urlMatch = /<url>(.*?)<\/url>/s.exec(infoXml);
+                const rootMatch = /<root>(.*?)<\/root>/s.exec(infoXml);
+                
                 if (urlMatch && urlMatch[1]) {
-                    const fullUrl = urlMatch[1];
-                    this._log(`找到SVN仓库URL: ${fullUrl}`);
-                    
-                    // 提取仓库根URL
-                    if (fullUrl.includes('/trunk/')) {
-                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/trunk/'));
-                    } else if (fullUrl.includes('/branches/')) {
-                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/branches/'));
-                    } else if (fullUrl.includes('/tags/')) {
-                        repoUrl = fullUrl.substring(0, fullUrl.indexOf('/tags/'));
-                    } else {
-                        repoUrl = fullUrl;
-                    }
-                    
-                    this._log(`提取的仓库根URL: ${repoUrl}`);
+                    repoUrl = urlMatch[1];
+                    this._log(`找到SVN仓库URL: ${repoUrl}`);
+                }
+                
+                if (rootMatch && rootMatch[1]) {
+                    repoRoot = rootMatch[1];
+                    this._log(`找到SVN仓库根URL: ${repoRoot}`);
                 }
             } catch (error: any) {
-                this._log(`获取仓库URL失败: ${error.message}`);
+                this._log(`获取仓库信息失败: ${error.message}`);
             }
             
-            // 如果成功获取到仓库URL，使用URL方式访问
-            if (repoUrl && isSvnRepoPath) {
-                const fileUrl = `${repoUrl}${filePath}`;
-                this._log(`构建文件完整URL: ${fileUrl}`);
+            // 构建正确的文件URL
+            let fileUrl = '';
+            if (repoRoot && filePath) {
+                // 智能拼接URL，避免路径重复
+                if (filePath.startsWith('/')) {
+                    // 如果文件路径以/开头，检查是否需要去除重复部分
+                    const repoUrlPath = repoUrl.replace(repoRoot, '');
+                    this._log(`仓库URL相对路径: ${repoUrlPath}`);
+                    
+                    if (repoUrlPath && filePath.startsWith(repoUrlPath)) {
+                        // 如果文件路径已经包含仓库路径，直接使用根URL拼接
+                        fileUrl = `${repoRoot}${filePath}`;
+                        this._log(`使用根URL拼接: ${fileUrl}`);
+                    } else {
+                        // 否则使用完整的仓库URL拼接
+                        fileUrl = `${repoUrl}${filePath}`;
+                        this._log(`使用完整仓库URL拼接: ${fileUrl}`);
+                    }
+                } else {
+                    // 相对路径，使用仓库URL拼接
+                    fileUrl = `${repoUrl}/${filePath}`;
+                    this._log(`相对路径拼接: ${fileUrl}`);
+                }
+            }
+            
+            // 如果成功构建了文件URL，尝试使用URL方式获取差异
+            if (fileUrl) {
+                this._log(`尝试使用文件URL获取差异: ${fileUrl}`);
                 
                 try {
                     // 创建临时文件来存储两个版本的内容
@@ -966,10 +1001,9 @@ export class SvnLogPanel {
                 }
             }
             
-            // 如果URL方式失败或无法获取URL，尝试使用其他方法
-            this._log('尝试使用其他方法获取差异');
+            // 如果URL方式失败，尝试使用diff命令
+            this._log('尝试使用diff命令获取差异');
             
-            // 尝试使用SVN的diff命令获取差异，然后创建临时文件
             try {
                 const tempDir = path.join(os.tmpdir(), 'vscode-svn-diff');
                 if (!fs.existsSync(tempDir)) {
@@ -979,46 +1013,79 @@ export class SvnLogPanel {
                 const fileName = path.basename(filePath);
                 const diffFilePath = path.join(tempDir, `${fileName}.diff`);
                 
-                // 尝试使用不同的命令格式
-                const commands = [
-                    repoUrl ? `diff -r ${prevRevision}:${revision} "${repoUrl}${filePath}"` : '',
-                    `diff -r ${prevRevision}:${revision} "${filePath}"`,
-                    `diff -r ${prevRevision}:${revision} "${path.basename(filePath)}"`,
-                    `diff -r ${prevRevision} -r ${revision} "${filePath}"`
-                ].filter(cmd => cmd); // 过滤掉空命令
+                // 构建多种尝试策略的命令列表
+                const commands = [];
+                
+                // 策略1: 使用完整URL的diff命令（优先）
+                if (fileUrl) {
+                    commands.push(`diff -r ${prevRevision}:${revision} "${fileUrl}"`);
+                    commands.push(`diff "${fileUrl}@${prevRevision}" "${fileUrl}@${revision}"`);
+                }
+                
+                // 策略2: 尝试相对于工作副本根目录的路径
+                if (repoUrl && repoRoot) {
+                    const relativePath = repoUrl.replace(repoRoot, '');
+                    if (relativePath && filePath.startsWith(relativePath)) {
+                        // 移除重复的路径部分
+                        const cleanPath = filePath.substring(relativePath.length);
+                        if (cleanPath) {
+                            commands.push(`diff -r ${prevRevision}:${revision} "${cleanPath}"`);
+                            this._log(`尝试使用清理后的相对路径: ${cleanPath}`);
+                        }
+                    }
+                }
+                
+                // 策略3: 在当前工作副本中使用不同的路径格式
+                commands.push(`diff -r ${prevRevision}:${revision} "${filePath}"`);
+                
+                // 策略4: 尝试使用文件名（适用于单文件场景）
+                commands.push(`diff -r ${prevRevision}:${revision} "${path.basename(filePath)}"`);
+                
+                // 策略5: 尝试相对路径（去掉开头的/）
+                if (filePath.startsWith('/')) {
+                    const relativeFilePath = filePath.substring(1);
+                    commands.push(`diff -r ${prevRevision}:${revision} "${relativeFilePath}"`);
+                }
+                
+                // 策略6: 如果是远程路径，尝试从工作副本根开始的相对路径
+                if (isRemotePath && this._targetSvnRelativePath) {
+                    // 尝试构建相对于SVN根的路径
+                    const svnRelativePath = this._targetSvnRelativePath;
+                    if (filePath.includes(svnRelativePath)) {
+                        const pathFromSvnRoot = filePath.substring(filePath.indexOf(svnRelativePath));
+                        commands.push(`diff -r ${prevRevision}:${revision} "${pathFromSvnRoot}"`);
+                        this._log(`尝试使用SVN相对路径: ${pathFromSvnRoot}`);
+                    }
+                }
+                
+                // 过滤掉重复的命令
+                const uniqueCommands = [...new Set(commands)].filter(cmd => cmd);
                 
                 let diffContent = '';
                 
-                for (const cmd of commands) {
+                this._log(`准备尝试 ${uniqueCommands.length} 个不同的diff命令策略`);
+                
+                for (let i = 0; i < uniqueCommands.length; i++) {
+                    const cmd = uniqueCommands[i];
                     try {
-                        this._log(`尝试命令: ${cmd}`);
+                        this._log(`[${i + 1}/${uniqueCommands.length}] 尝试命令: ${cmd}`);
                         const diff = await this.svnService.executeSvnCommand(cmd, workingDir, false);
                         
                         if (diff && diff.trim() !== '') {
-                            this._log(`命令 "${cmd}" 成功获取差异信息`);
-                            diffContent = diff;
-                            break;
+                            // 检查是否是有效的diff输出
+                            if (diff.includes('Index:') || diff.includes('@@') || diff.includes('---') || diff.includes('+++') || diff.includes('Property changes')) {
+                                this._log(`命令 "${cmd}" 成功获取有效差异信息，长度: ${diff.length}`);
+                                diffContent = diff;
+                                break;
+                            } else {
+                                this._log(`命令 "${cmd}" 返回内容但不是标准diff格式，内容预览: ${diff.substring(0, 200)}...`);
+                            }
                         } else {
                             this._log(`命令 "${cmd}" 返回空结果`);
                         }
                     } catch (error: any) {
                         this._log(`命令 "${cmd}" 失败: ${error.message}`);
-                    }
-                }
-                
-                if (!diffContent && repoUrl && isSvnRepoPath) {
-                    try {
-                        const urlDiffCommand = `diff "${repoUrl}${filePath}@${prevRevision}" "${repoUrl}${filePath}@${revision}"`;
-                        this._log(`尝试URL直接比较: ${urlDiffCommand}`);
-                        
-                        const urlDiff = await this.svnService.executeSvnCommand(urlDiffCommand, workingDir, false);
-                        
-                        if (urlDiff && urlDiff.trim() !== '') {
-                            this._log('URL直接比较成功获取差异信息');
-                            diffContent = urlDiff;
-                        }
-                    } catch (error: any) {
-                        this._log(`URL直接比较失败: ${error.message}`);
+                        // 继续尝试下一个命令
                     }
                 }
                 
