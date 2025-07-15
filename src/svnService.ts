@@ -23,6 +23,18 @@ export class SvnService {
   }
 
   /**
+   * 获取用户配置的编码设置
+   */
+  private getEncodingConfig(): { encoding: string; locale: string } {
+    const config = vscode.workspace.getConfiguration('vscode-svn');
+    const encoding = config.get<string>('encoding', 'utf8');
+    const locale = config.get<string>('svnLocale', 'en_US.UTF-8');
+    
+    this.outputChannel.appendLine(`[getEncodingConfig] 编码设置: ${encoding}, 语言环境: ${locale}`);
+    return { encoding, locale };
+  }
+
+  /**
    * 执行SVN命令
    * @param command SVN命令
    * @param path 工作目录
@@ -34,16 +46,19 @@ export class SvnService {
       this.outputChannel.appendLine(`\n[executeSvnCommand] 执行SVN命令: svn ${command}`);
       this.outputChannel.appendLine(`[executeSvnCommand] 工作目录: ${path}`);
       
+      // 获取用户配置的编码设置
+      const { encoding, locale } = this.getEncodingConfig();
+      
       // 设置环境变量以解决编码问题
       const env = {
         ...process.env,
-        LANG: 'en_US.UTF-8',
-        LC_ALL: 'en_US.UTF-8',
-        LANGUAGE: 'en_US.UTF-8',
+        LANG: locale,
+        LC_ALL: locale,
+        LANGUAGE: locale,
         SVN_EDITOR: 'vim'
       };
       
-      this.outputChannel.appendLine(`[executeSvnCommand] 设置环境变量: LANG=en_US.UTF-8, LC_ALL=en_US.UTF-8, LANGUAGE=en_US.UTF-8`);
+      this.outputChannel.appendLine(`[executeSvnCommand] 设置环境变量: LANG=${locale}, LC_ALL=${locale}, LANGUAGE=${locale}`);
       
       // 根据 useXml 参数决定是否添加 --xml 标志
       const xmlFlag = useXml ? '--xml' : '';
@@ -70,6 +85,7 @@ export class SvnService {
           { 
             cwd: path, 
             env,
+            encoding: encoding as BufferEncoding, // 使用用户配置的编码
             maxBuffer: 50 * 1024 * 1024 // 增加缓冲区大小到50MB
           },
           (error, stdout, stderr) => {
@@ -83,7 +99,7 @@ export class SvnService {
                 reject(error);
               }
             } else {
-              this.outputChannel.appendLine(`[executeSvnCommand] 命令执行成功，输出长度: ${stdout.length} 字节`);
+              this.outputChannel.appendLine(`[executeSvnCommand] 命令执行成功，输出长度: ${stdout.length} 字节，使用编码: ${encoding}`);
               if (stdout.length < 1000) {
                 this.outputChannel.appendLine(`[executeSvnCommand] 输出内容: ${stdout.replace(/\n/g, '\\n')}`);
               } else {

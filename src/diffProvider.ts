@@ -50,18 +50,25 @@ export class SvnDiffProvider {
       const exec = promisify(cp.exec);
       
       try {
+        // 获取用户配置的编码设置
+        const config = vscode.workspace.getConfiguration('vscode-svn');
+        const encoding = config.get<string>('encoding', 'utf8');
+        const locale = config.get<string>('svnLocale', 'en_US.UTF-8');
+        
         // 设置环境变量以解决编码问题
         const env = Object.assign({}, process.env, {
-          LANG: 'en_US.UTF-8',
-          LC_ALL: 'en_US.UTF-8',
-          LANGUAGE: 'en_US.UTF-8',
+          LANG: locale,
+          LC_ALL: locale,
+          LANGUAGE: locale,
           SVN_EDITOR: 'vim'
         });
         
+        this.outputChannel.appendLine(`[getDiff] 使用编码设置: ${encoding}, 语言环境: ${locale}`);
         this.outputChannel.appendLine(`[getDiff] 直接执行命令: svn ${diffCommand}`);
         const { stdout } = await exec(`svn ${diffCommand}`, { 
           cwd, 
           env,
+          encoding: encoding as BufferEncoding, // 使用用户配置的编码
           maxBuffer: 10 * 1024 * 1024 // 增加缓冲区大小到10MB
         });
         
@@ -179,11 +186,15 @@ export class SvnDiffProvider {
         const cwd = path.dirname(filePath);
         const fileName = path.basename(filePath);
         
+        // 获取用户配置的编码设置
+        const config = vscode.workspace.getConfiguration('vscode-svn');
+        const encoding = config.get<string>('encoding', 'utf8');
+        
         // 获取文件当前内容
         this.outputChannel.appendLine(`[getDiff] 读取当前文件内容...`);
         const currentContent = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
-        const currentText = Buffer.from(currentContent).toString('utf8');
-        this.outputChannel.appendLine(`[getDiff] 当前文件内容长度: ${currentText.length} 字节`);
+        const currentText = Buffer.from(currentContent).toString(encoding as BufferEncoding);
+        this.outputChannel.appendLine(`[getDiff] 当前文件内容长度: ${currentText.length} 字节，使用编码: ${encoding}`);
         
         // 获取SVN版本内容
         this.outputChannel.appendLine(`[getDiff] 获取SVN版本内容...`);
