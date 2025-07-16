@@ -3,15 +3,163 @@ import * as path from 'path';
 import { SvnService } from './svnService';
 
 /**
- * SVN差异对比提供器
+ * SVN差异提供器，处理文件差异的显示和编码问题
  */
 export class SvnDiffProvider {
-  private readonly svnService: SvnService;
   private outputChannel: vscode.OutputChannel;
+  private svnService: SvnService;
 
   constructor(svnService: SvnService) {
     this.svnService = svnService;
-    this.outputChannel = vscode.window.createOutputChannel('SVN差异诊断');
+    this.outputChannel = vscode.window.createOutputChannel('SVN差异');
+  }
+
+  /**
+   * 获取编码配置
+   * @returns 编码配置对象
+   */
+  private getEncodingConfig() {
+    const config = vscode.workspace.getConfiguration('vscode-svn');
+    return {
+      defaultFileEncoding: config.get<string>('defaultFileEncoding', 'auto'),
+      forceUtf8Output: config.get<boolean>('forceUtf8Output', true),
+      enableEncodingDetection: config.get<boolean>('enableEncodingDetection', true),
+      encodingFallbacks: config.get<string[]>('encodingFallbacks', ['utf8', 'gbk', 'gb2312', 'big5']),
+      showEncodingInfo: config.get<boolean>('showEncodingInfo', false)
+    };
+  }
+
+  /**
+   * 读取文件内容并处理编码
+   * @param filePath 文件路径
+   * @returns 文件内容
+   */
+  private async readFileWithEncoding(filePath: string): Promise<{ content: string, encoding: string }> {
+    try {
+      const fs = require('fs');
+      const buffer = fs.readFileSync(filePath);
+      
+      // 检测编码
+      const encoding = this.detectFileEncoding(buffer);
+      this.outputChannel.appendLine(`[readFileWithEncoding] 检测到文件编码: ${encoding}`);
+      
+      // 根据检测到的编码读取文件
+      let content: string;
+      if (encoding === 'utf8' || encoding === 'utf8-bom') {
+        content = buffer.toString('utf8');
+        // 移除BOM
+        if (encoding === 'utf8-bom' && content.charCodeAt(0) === 0xFEFF) {
+          content = content.slice(1);
+        }
+      } else {
+        // 对于其他编码，尝试转换为UTF-8
+        content = this.convertBufferToUtf8(buffer, encoding);
+      }
+      
+      return { content, encoding };
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[readFileWithEncoding] 读取文件失败: ${error.message}`);
+      // 回退到VSCode的默认方式
+      const uri = vscode.Uri.file(filePath);
+      const fileContent = await vscode.workspace.fs.readFile(uri);
+      return { 
+        content: Buffer.from(fileContent).toString('utf8'), 
+        encoding: 'utf8' 
+      };
+    }
+  }
+
+  /**
+   * 检测文件编码
+   * @param buffer 文件缓冲区
+   * @returns 编码类型
+   */
+  private detectFileEncoding(buffer: Buffer): string {
+    const config = this.getEncodingConfig();
+    
+    // 如果禁用了编码检测，直接使用默认编码
+    if (!config.enableEncodingDetection) {
+      return config.defaultFileEncoding === 'auto' ? 'utf8' : config.defaultFileEncoding;
+    }
+    
+    // 如果指定了非auto编码，直接使用
+    if (config.defaultFileEncoding !== 'auto') {
+      this.outputChannel.appendLine(`[detectFileEncoding] 使用配置的默认编码: ${config.defaultFileEncoding}`);
+      return config.defaultFileEncoding;
+    }
+
+    // 检测BOM
+    if (buffer.length >= 3) {
+      if (buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+        return 'utf8-bom';
+      }
+    }
+    
+    if (buffer.length >= 2) {
+      if (buffer[0] === 0xFF && buffer[1] === 0xFE) {
+        return 'utf16le';
+      }
+      if (buffer[0] === 0xFE && buffer[1] === 0xFF) {
+        return 'utf16be';
+      }
+    }
+    
+    // 尝试UTF-8解析
+    try {
+      const text = buffer.toString('utf8');
+      if (!text.includes('\uFFFD')) {
+        return 'utf8';
+      }
+    } catch {}
+    
+    // 检测中文编码
+    return this.detectChineseEncoding(buffer);
+  }
+
+  /**
+   * 检测中文编码
+   * @param buffer 文件缓冲区
+   * @returns 编码类型
+   */
+  private detectChineseEncoding(buffer: Buffer): string {
+    const config = this.getEncodingConfig();
+    const encodings = config.encodingFallbacks;
+    
+    for (const encoding of encodings) {
+      try {
+        const text = buffer.toString(encoding as BufferEncoding);
+        // 检查是否包含中文字符且没有乱码
+        if (/[\u4e00-\u9fff]/.test(text) && !text.includes('\uFFFD')) {
+          return encoding;
+        }
+      } catch {
+        continue;
+      }
+    }
+    
+    return 'utf8'; // 默认返回UTF-8
+  }
+
+  /**
+   * 将缓冲区转换为UTF-8字符串
+   * @param buffer 源缓冲区
+   * @param sourceEncoding 源编码
+   * @returns UTF-8字符串
+   */
+  private convertBufferToUtf8(buffer: Buffer, sourceEncoding: string): string {
+    try {
+      if (sourceEncoding === 'utf8' || sourceEncoding === 'utf8-bom') {
+        return buffer.toString('utf8');
+      }
+      
+      // 对于其他编码，先解码再编码为UTF-8
+      const text = buffer.toString(sourceEncoding as BufferEncoding);
+      return Buffer.from(text, sourceEncoding as BufferEncoding).toString('utf8');
+    } catch (error) {
+      this.outputChannel.appendLine(`[convertBufferToUtf8] 编码转换失败: ${error}`);
+      // 回退到默认UTF-8
+      return buffer.toString('utf8');
+    }
   }
 
   /**
@@ -38,173 +186,196 @@ export class SvnDiffProvider {
         this.outputChannel.appendLine(`[getDiff] 获取文件状态失败: ${statusError.message}`);
       }
       
-      // 使用更多参数来处理编码问题，但不使用XML格式
+      // 使用增强的SVN diff命令
       this.outputChannel.appendLine(`[getDiff] 执行SVN差异命令...`);
-      // 注意：不使用--xml参数，因为diff命令的XML输出不包含实际差异内容
-      const diffCommand = `diff "${fileName}" --force -x "--ignore-space-change --ignore-eol-style"`;
+      
+      // 构建diff命令，增加编码支持参数
+      const diffCommand = `diff "${fileName}" --force --internal-diff -x "--ignore-space-change --ignore-eol-style"`;
       this.outputChannel.appendLine(`[getDiff] 命令: svn ${diffCommand}`);
       
-      // 直接执行命令而不通过svnService，以避免自动添加--xml参数
-      const cp = require('child_process');
-      const { promisify } = require('util');
-      const exec = promisify(cp.exec);
-      
       try {
-        // 设置环境变量以解决编码问题
-        const env = Object.assign({}, process.env, {
-          LANG: 'en_US.UTF-8',
-          LC_ALL: 'en_US.UTF-8',
-          LANGUAGE: 'en_US.UTF-8',
-          SVN_EDITOR: 'vim'
-        });
+        // 使用增强的SVN服务执行命令
+        const diffResult = await this.svnService.executeSvnCommand(diffCommand, cwd, false);
         
-        this.outputChannel.appendLine(`[getDiff] 直接执行命令: svn ${diffCommand}`);
-        const { stdout } = await exec(`svn ${diffCommand}`, { 
-          cwd, 
-          env,
-          maxBuffer: 10 * 1024 * 1024 // 增加缓冲区大小到10MB
-        });
-        
-        this.outputChannel.appendLine(`[getDiff] 差异命令执行成功，结果长度: ${stdout.length} 字节`);
-        if (stdout.length > 0) {
-          this.outputChannel.appendLine(`[getDiff] 差异内容前100个字符: ${stdout.substring(0, 100).replace(/\n/g, '\\n')}`);
+        this.outputChannel.appendLine(`[getDiff] 差异命令执行成功，结果长度: ${diffResult.length} 字节`);
+        if (diffResult.length > 0) {
+          this.outputChannel.appendLine(`[getDiff] 差异内容前100个字符: ${diffResult.substring(0, 100).replace(/\n/g, '\\n')}`);
+          return diffResult;
         } else {
-          this.outputChannel.appendLine(`[getDiff] 警告: 差异结果为空`);
+          this.outputChannel.appendLine(`[getDiff] 差异结果为空，尝试内容比较方法`);
+          return await this.getContentComparison(filePath, fileName, cwd);
         }
-        
-        if (stdout.trim() === '') {
-          // 尝试使用另一种方式获取差异
-          this.outputChannel.appendLine(`[getDiff] 尝试使用cat命令获取SVN版本内容...`);
-          const baseContent = await this.svnService.executeSvnCommand(`cat "${fileName}"`, cwd);
-          this.outputChannel.appendLine(`[getDiff] SVN版本内容长度: ${baseContent.length} 字节`);
-          
-          // 获取文件当前内容
-          const currentContent = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
-          const currentText = Buffer.from(currentContent).toString('utf8');
-          this.outputChannel.appendLine(`[getDiff] 当前文件内容长度: ${currentText.length} 字节`);
-          
-          // 比较内容是否相同
-          const isDifferent = currentText !== baseContent;
-          this.outputChannel.appendLine(`[getDiff] 内容比较结果: ${isDifferent ? '不同' : '相同'}`);
-          
-          if (isDifferent) {
-            this.outputChannel.appendLine(`[getDiff] 检测到文件有变化，但diff命令未返回差异`);
-            
-            // 尝试使用系统diff命令
-            try {
-              this.outputChannel.appendLine(`[getDiff] 尝试使用系统diff命令...`);
-              
-              // 创建临时文件
-              const tempDir = require('os').tmpdir();
-              const fs = require('fs');
-              const baseFilePath = path.join(tempDir, `svn_base_${path.basename(filePath)}`);
-              const currentFilePath = path.join(tempDir, `svn_current_${path.basename(filePath)}`);
-              
-              // 写入内容到临时文件
-              fs.writeFileSync(baseFilePath, baseContent);
-              fs.writeFileSync(currentFilePath, currentText);
-              
-              // 使用系统diff命令
-              try {
-                const { stdout: diffOutput } = await exec(`diff -u "${baseFilePath}" "${currentFilePath}"`, { 
-                  maxBuffer: 10 * 1024 * 1024
-                });
-                
-                // 清理临时文件
-                fs.unlinkSync(baseFilePath);
-                fs.unlinkSync(currentFilePath);
-                
-                if (diffOutput.trim() !== '') {
-                  this.outputChannel.appendLine(`[getDiff] 系统diff命令成功，结果长度: ${diffOutput.length} 字节`);
-                  return diffOutput;
-                }
-              } catch (diffError: any) {
-                // diff命令返回非零退出码时也会抛出异常，但可能包含有效的差异输出
-                if (diffError.stdout && diffError.stdout.trim() !== '') {
-                  this.outputChannel.appendLine(`[getDiff] 系统diff命令返回差异，结果长度: ${diffError.stdout.length} 字节`);
-                  
-                  // 清理临时文件
-                  fs.unlinkSync(baseFilePath);
-                  fs.unlinkSync(currentFilePath);
-                  
-                  return diffError.stdout;
-                }
-                
-                // 清理临时文件
-                fs.unlinkSync(baseFilePath);
-                fs.unlinkSync(currentFilePath);
-                
-                this.outputChannel.appendLine(`[getDiff] 系统diff命令失败: ${diffError.message}`);
-              }
-            } catch (tempFileError: any) {
-              this.outputChannel.appendLine(`[getDiff] 临时文件操作失败: ${tempFileError.message}`);
-            }
-            
-            // 如果所有方法都失败，返回基本信息
-            return `--- ${fileName}\t(版本库版本)\n+++ ${fileName}\t(工作副本)\n\n` + 
-                   `SVN差异比较：\n` +
-                   `文件在SVN中的大小: ${baseContent.length} 字节\n` +
-                   `当前文件大小: ${currentText.length} 字节\n\n` +
-                   `注意：SVN diff命令未返回差异内容，但文件内容确实不同。\n` +
-                   `这可能是由于编码问题或SVN配置导致。您仍然可以继续提交。`;
-          } else {
-            return `文件内容与SVN版本相同，没有检测到差异。`;
-          }
-        }
-        
-        return stdout;
-      } catch (execError: any) {
-        this.outputChannel.appendLine(`[getDiff] 直接执行命令失败: ${execError.message}`);
-        if (execError.stderr) {
-          this.outputChannel.appendLine(`[getDiff] 错误输出: ${execError.stderr}`);
-        }
-        
-        // 如果直接执行失败，尝试使用svnService
-        const diffResult = await this.svnService.executeSvnCommand(diffCommand, cwd);
-        
-        // 检查是否是XML格式的输出
-        if (diffResult.includes('<?xml') && !diffResult.includes('<diff>')) {
-          this.outputChannel.appendLine(`[getDiff] 收到XML格式输出，但不包含差异内容`);
-          throw new Error('SVN返回了XML格式的输出，但不包含差异内容');
-        }
-        
-        return diffResult;
+      } catch (diffError: any) {
+        this.outputChannel.appendLine(`[getDiff] SVN diff命令失败: ${diffError.message}`);
+        return await this.getContentComparison(filePath, fileName, cwd);
       }
     } catch (error: any) {
       this.outputChannel.appendLine(`[getDiff] 错误: ${error.message}`);
       this.outputChannel.appendLine(`[getDiff] 尝试备用方法...`);
       
-      // 如果获取差异失败，尝试使用另一种方法
-      try {
-        const cwd = path.dirname(filePath);
-        const fileName = path.basename(filePath);
-        
-        // 获取文件当前内容
-        this.outputChannel.appendLine(`[getDiff] 读取当前文件内容...`);
-        const currentContent = await vscode.workspace.fs.readFile(vscode.Uri.file(filePath));
-        const currentText = Buffer.from(currentContent).toString('utf8');
-        this.outputChannel.appendLine(`[getDiff] 当前文件内容长度: ${currentText.length} 字节`);
-        
-        // 获取SVN版本内容
-        this.outputChannel.appendLine(`[getDiff] 获取SVN版本内容...`);
-        const baseContent = await this.svnService.executeSvnCommand(`cat "${fileName}"`, cwd);
-        this.outputChannel.appendLine(`[getDiff] SVN版本内容长度: ${baseContent.length} 字节`);
-        
-        // 比较内容是否相同
-        const isDifferent = currentText !== baseContent;
-        this.outputChannel.appendLine(`[getDiff] 内容比较结果: ${isDifferent ? '不同' : '相同'}`);
-        
-        // 手动创建差异信息
-        return `--- ${fileName}\t(版本库版本)\n+++ ${fileName}\t(工作副本)\n\n` + 
-               `SVN差异比较：\n` +
-               `文件在SVN中的大小: ${baseContent.length} 字节\n` +
-               `当前文件大小: ${currentText.length} 字节\n\n` +
-               `注意：由于编码问题，无法显示详细差异。请使用"提交"功能继续。\n` +
-               `原始错误: ${error.message}`;
-      } catch (fallbackError: any) {
-        this.outputChannel.appendLine(`[getDiff] 备用方法也失败: ${fallbackError.message}`);
-        throw new Error(`获取差异失败: ${error.message}\n备用方法失败: ${fallbackError.message}`);
+      return await this.getFallbackDiff(filePath);
+    }
+  }
+
+  /**
+   * 通过内容比较获取差异
+   * @param filePath 文件路径
+   * @param fileName 文件名
+   * @param cwd 工作目录
+   * @returns 差异内容
+   */
+  private async getContentComparison(filePath: string, fileName: string, cwd: string): Promise<string> {
+    try {
+      this.outputChannel.appendLine(`[getContentComparison] 开始内容比较`);
+      
+      // 获取当前文件内容（处理编码）
+      const { content: currentContent, encoding: currentEncoding } = await this.readFileWithEncoding(filePath);
+      this.outputChannel.appendLine(`[getContentComparison] 当前文件编码: ${currentEncoding}, 长度: ${currentContent.length} 字符`);
+      
+      // 获取SVN版本内容
+      this.outputChannel.appendLine(`[getContentComparison] 获取SVN版本内容...`);
+      const baseContent = await this.svnService.executeSvnCommand(`cat "${fileName}"`, cwd, false);
+      this.outputChannel.appendLine(`[getContentComparison] SVN版本内容长度: ${baseContent.length} 字符`);
+      
+      // 比较内容
+      const isDifferent = currentContent !== baseContent;
+      this.outputChannel.appendLine(`[getContentComparison] 内容比较结果: ${isDifferent ? '不同' : '相同'}`);
+      
+      if (isDifferent) {
+        // 创建自定义差异显示
+        return this.createCustomDiff(fileName, baseContent, currentContent, currentEncoding);
+      } else {
+        return `文件内容与SVN版本相同，没有检测到差异。`;
       }
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[getContentComparison] 内容比较失败: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * 创建自定义差异显示
+   * @param fileName 文件名
+   * @param baseContent SVN版本内容
+   * @param currentContent 当前内容
+   * @param encoding 当前文件编码
+   * @returns 差异显示字符串
+   */
+  private createCustomDiff(fileName: string, baseContent: string, currentContent: string, encoding: string): string {
+    try {
+      // 使用系统diff命令创建详细差异
+      const tempDir = require('os').tmpdir();
+      const fs = require('fs');
+      const path = require('path');
+      const { promisify } = require('util');
+      const exec = promisify(require('child_process').exec);
+      
+      const baseFilePath = path.join(tempDir, `svn_base_${fileName}`);
+      const currentFilePath = path.join(tempDir, `svn_current_${fileName}`);
+      
+      // 写入临时文件（确保UTF-8编码）
+      fs.writeFileSync(baseFilePath, baseContent, 'utf8');
+      fs.writeFileSync(currentFilePath, currentContent, 'utf8');
+      
+      return exec(`diff -u "${baseFilePath}" "${currentFilePath}"`, { 
+        maxBuffer: 10 * 1024 * 1024,
+        encoding: 'utf8'
+      }).then((result: any) => {
+        // 清理临时文件
+        try { fs.unlinkSync(baseFilePath); } catch {}
+        try { fs.unlinkSync(currentFilePath); } catch {}
+        
+        if (result.stdout) {
+          return this.processDiffOutput(result.stdout, fileName, encoding);
+        } else {
+          return this.createSimpleDiff(fileName, baseContent, currentContent, encoding);
+        }
+      }).catch((diffError: any) => {
+        // 清理临时文件
+        try { fs.unlinkSync(baseFilePath); } catch {}
+        try { fs.unlinkSync(currentFilePath); } catch {}
+        
+        // diff命令失败时，diffError.stdout可能仍包含有效的差异输出
+        if (diffError.stdout) {
+          return this.processDiffOutput(diffError.stdout, fileName, encoding);
+        } else {
+          return this.createSimpleDiff(fileName, baseContent, currentContent, encoding);
+        }
+      });
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[createCustomDiff] 创建自定义差异失败: ${error.message}`);
+      return this.createSimpleDiff(fileName, baseContent, currentContent, encoding);
+    }
+  }
+
+  /**
+   * 处理diff输出
+   * @param diffOutput diff命令输出
+   * @param fileName 文件名
+   * @param encoding 文件编码
+   * @returns 处理后的差异
+   */
+  private processDiffOutput(diffOutput: string, fileName: string, encoding: string): string {
+    let processedOutput = diffOutput;
+    
+    // 替换临时文件路径为实际文件名
+    processedOutput = processedOutput.replace(/\/tmp\/svn_base_[^\t\n]+/g, `${fileName} (SVN版本)`);
+    processedOutput = processedOutput.replace(/\/tmp\/svn_current_[^\t\n]+/g, `${fileName} (工作副本)`);
+    
+    // 根据配置决定是否添加编码信息
+    const config = this.getEncodingConfig();
+    if (config.showEncodingInfo && encoding !== 'utf8') {
+      const encodingInfo = `文件编码信息: ${encoding}\n\n`;
+      processedOutput = encodingInfo + processedOutput;
+    }
+    
+    return processedOutput;
+  }
+
+  /**
+   * 创建简单差异显示
+   * @param fileName 文件名
+   * @param baseContent SVN版本内容
+   * @param currentContent 当前内容
+   * @param encoding 文件编码
+   * @returns 简单差异显示
+   */
+  private createSimpleDiff(fileName: string, baseContent: string, currentContent: string, encoding: string): string {
+    const config = this.getEncodingConfig();
+    const encodingInfo = (config.showEncodingInfo && encoding !== 'utf8') ? ` [原始编码: ${encoding}]` : '';
+    
+    return `--- ${fileName} (SVN版本)${encodingInfo}\n` + 
+           `+++ ${fileName} (工作副本)${encodingInfo}\n\n` + 
+           `文件差异概要：\n` +
+           `SVN版本大小: ${baseContent.length} 字符\n` +
+           `当前版本大小: ${currentContent.length} 字符\n` +
+           `大小变化: ${currentContent.length - baseContent.length > 0 ? '+' : ''}${currentContent.length - baseContent.length} 字符\n` +
+           (config.showEncodingInfo ? `文件编码: ${encoding}\n` : '') +
+           `\n注意：由于编码复杂性，显示简化差异信息。您可以继续提交文件。\n\n` +
+           `如需查看详细差异，建议使用外部差异工具。`;
+  }
+
+  /**
+   * 备用差异获取方法
+   * @param filePath 文件路径
+   * @returns 备用差异信息
+   */
+  private async getFallbackDiff(filePath: string): Promise<string> {
+    try {
+      const fileName = path.basename(filePath);
+      const { content: currentContent, encoding } = await this.readFileWithEncoding(filePath);
+      
+      return `--- ${fileName} (备用差异检查)\n` + 
+             `+++ ${fileName} (当前版本)\n\n` + 
+             `文件信息：\n` +
+             `文件编码: ${encoding}\n` +
+             `文件大小: ${currentContent.length} 字符\n\n` +
+             `注意：无法获取详细差异信息，可能由于编码或SVN配置问题。\n` +
+             `建议检查文件编码设置或使用外部工具查看差异。\n` +
+             `您仍然可以继续提交此文件。`;
+    } catch (fallbackError: any) {
+      this.outputChannel.appendLine(`[getFallbackDiff] 备用方法也失败: ${fallbackError.message}`);
+      throw new Error(`获取差异失败: 所有方法都无法处理此文件的编码问题`);
     }
   }
 

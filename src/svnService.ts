@@ -2,24 +2,210 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as cp from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import { promisify } from 'util';
 import { SvnFilterService } from './filterService';
 
 const exec = promisify(cp.exec);
 const fsExists = promisify(fs.exists);
 
+interface SvnStatus {
+  status: string;
+  filePath: string;
+}
+
 /**
- * SVN操作服务类
+ * SVN服务类，负责执行SVN命令和管理SVN工作副本
  */
 export class SvnService {
   // 存储自定义SVN工作副本路径
   private customSvnRoot: string | undefined;
   private outputChannel: vscode.OutputChannel;
   private filterService: SvnFilterService;
+  private _workingCopyPath: string | undefined;
 
   constructor() {
-    this.outputChannel = vscode.window.createOutputChannel('SVN命令诊断');
+    this.outputChannel = vscode.window.createOutputChannel('SVN');
     this.filterService = new SvnFilterService();
+  }
+
+  /**
+   * 获取编码配置
+   * @returns 编码配置对象
+   */
+  private getEncodingConfig() {
+    const config = vscode.workspace.getConfiguration('vscode-svn');
+    return {
+      defaultFileEncoding: config.get<string>('defaultFileEncoding', 'auto'),
+      forceUtf8Output: config.get<boolean>('forceUtf8Output', true),
+      enableEncodingDetection: config.get<boolean>('enableEncodingDetection', true),
+      encodingFallbacks: config.get<string[]>('encodingFallbacks', ['utf8', 'gbk', 'gb2312', 'big5']),
+      showEncodingInfo: config.get<boolean>('showEncodingInfo', false)
+    };
+  }
+
+  /**
+   * 检测文件编码
+   * @param filePath 文件路径
+   * @returns 编码类型
+   */
+  private detectFileEncoding(filePath: string): string {
+    const config = this.getEncodingConfig();
+    
+    // 如果禁用了编码检测，直接使用默认编码
+    if (!config.enableEncodingDetection) {
+      return config.defaultFileEncoding === 'auto' ? 'utf8' : config.defaultFileEncoding;
+    }
+    
+    // 如果指定了非auto编码，直接使用
+    if (config.defaultFileEncoding !== 'auto') {
+      this.outputChannel.appendLine(`[detectFileEncoding] 使用配置的默认编码: ${config.defaultFileEncoding}`);
+      return config.defaultFileEncoding;
+    }
+
+    try {
+      const buffer = fs.readFileSync(filePath);
+      
+      // 检测BOM
+      if (buffer.length >= 3) {
+        if (buffer[0] === 0xEF && buffer[1] === 0xBB && buffer[2] === 0xBF) {
+          return 'utf8-bom';
+        }
+      }
+      
+      if (buffer.length >= 2) {
+        if (buffer[0] === 0xFF && buffer[1] === 0xFE) {
+          return 'utf16le';
+        }
+        if (buffer[0] === 0xFE && buffer[1] === 0xFF) {
+          return 'utf16be';
+        }
+      }
+      
+      // 尝试解析为UTF-8
+      try {
+        const text = buffer.toString('utf8');
+        // 检查是否包含无效字符
+        if (text.includes('\uFFFD')) {
+          // 可能是其他编码，尝试检测
+          return this.detectChineseEncoding(buffer);
+        }
+        return 'utf8';
+      } catch {
+        return this.detectChineseEncoding(buffer);
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(`[detectFileEncoding] 检测文件编码失败: ${error}`);
+      return 'utf8'; // 默认使用UTF-8
+    }
+  }
+
+  /**
+   * 检测中文编码
+   * @param buffer 文件缓冲区
+   * @returns 编码类型
+   */
+  private detectChineseEncoding(buffer: Buffer): string {
+    const config = this.getEncodingConfig();
+    
+    try {
+      // 使用配置的备用编码列表
+      const encodings = config.encodingFallbacks;
+      
+      for (const encoding of encodings) {
+        try {
+          // 使用iconv-lite库进行编码检测和转换（如果可用）
+          const text = buffer.toString(encoding as BufferEncoding);
+          
+          // 检查是否包含常见中文字符
+          const chineseRegex = /[\u4e00-\u9fff]/;
+          if (chineseRegex.test(text) && !text.includes('\uFFFD')) {
+            this.outputChannel.appendLine(`[detectChineseEncoding] 检测到编码: ${encoding}`);
+            return encoding;
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch (error) {
+      this.outputChannel.appendLine(`[detectChineseEncoding] 编码检测失败: ${error}`);
+    }
+    
+    return 'utf8'; // 默认返回UTF-8
+  }
+
+  /**
+   * 转换文本编码为UTF-8
+   * @param text 原始文本
+   * @param sourceEncoding 源编码
+   * @returns UTF-8编码的文本
+   */
+  private convertToUtf8(text: string, sourceEncoding: string): string {
+    try {
+      if (sourceEncoding === 'utf8' || sourceEncoding === 'utf8-bom') {
+        return text;
+      }
+      
+      // 对于非UTF-8编码，尝试重新编码
+      const buffer = Buffer.from(text, sourceEncoding as BufferEncoding);
+      return buffer.toString('utf8');
+    } catch (error) {
+      this.outputChannel.appendLine(`[convertToUtf8] 编码转换失败: ${error}`);
+      return text; // 转换失败时返回原文本
+    }
+  }
+
+  /**
+   * 获取增强的环境变量配置
+   * @returns 环境变量对象
+   */
+  private getEnhancedEnvironment(): NodeJS.ProcessEnv {
+    const platform = os.platform();
+    const baseEnv = { ...process.env };
+    const config = this.getEncodingConfig();
+    
+    // 如果启用了强制UTF-8输出，设置相应的环境变量
+    let utf8Env: Record<string, string> = {};
+    
+    if (config.forceUtf8Output) {
+      // 基础UTF-8环境变量
+      utf8Env = {
+        LANG: 'en_US.UTF-8',
+        LC_ALL: 'en_US.UTF-8',
+        LC_CTYPE: 'en_US.UTF-8',
+        LC_MESSAGES: 'en_US.UTF-8',
+        LANGUAGE: 'en_US.UTF-8',
+        SVN_EDITOR: 'echo'  // 避免交互式编辑器
+      };
+      
+      // 根据平台添加特定配置
+      if (platform === 'win32') {
+        // Windows特定配置
+        Object.assign(utf8Env, {
+          PYTHONIOENCODING: 'utf-8',
+          // 设置代码页为UTF-8
+          CHCP: '65001'
+        });
+      } else if (platform === 'darwin') {
+        // macOS特定配置
+        Object.assign(utf8Env, {
+          LC_COLLATE: 'en_US.UTF-8',
+          LC_MONETARY: 'en_US.UTF-8',
+          LC_NUMERIC: 'en_US.UTF-8',
+          LC_TIME: 'en_US.UTF-8'
+        });
+      }
+    } else {
+      // 如果没有强制UTF-8输出，只设置基本的编辑器配置
+      utf8Env = {
+        SVN_EDITOR: 'echo'  // 避免交互式编辑器
+      };
+      
+      this.outputChannel.appendLine(`[getEnhancedEnvironment] 强制UTF-8输出已禁用，使用系统默认编码`);
+    }
+    
+    // 合并环境变量
+    return Object.assign(baseEnv, utf8Env);
   }
 
   /**
@@ -34,32 +220,39 @@ export class SvnService {
       this.outputChannel.appendLine(`\n[executeSvnCommand] 执行SVN命令: svn ${command}`);
       this.outputChannel.appendLine(`[executeSvnCommand] 工作目录: ${path}`);
       
-      // 设置环境变量以解决编码问题
-      const env = {
-        ...process.env,
-        LANG: 'en_US.UTF-8',
-        LC_ALL: 'en_US.UTF-8',
-        LANGUAGE: 'en_US.UTF-8',
-        SVN_EDITOR: 'vim'
-      };
+      // 获取增强的环境变量配置
+      const env = this.getEnhancedEnvironment();
       
-      this.outputChannel.appendLine(`[executeSvnCommand] 设置环境变量: LANG=en_US.UTF-8, LC_ALL=en_US.UTF-8, LANGUAGE=en_US.UTF-8`);
+      this.outputChannel.appendLine(`[executeSvnCommand] 设置编码环境变量: LANG=${env.LANG}, LC_ALL=${env.LC_ALL}`);
       
       // 根据 useXml 参数决定是否添加 --xml 标志
-      const xmlFlag = useXml ? '--xml' : '';
-      
-      if (xmlFlag) {
+      let xmlFlag = '';
+      if (useXml) {
+        xmlFlag = '--xml';
         this.outputChannel.appendLine(`[executeSvnCommand] 添加XML输出标志: ${xmlFlag}`);
       }
       
-      // 对于diff命令，添加特殊处理
-      if (command.includes('diff') && !command.includes('--force')) {
-        command = `${command} --force`;
-        this.outputChannel.appendLine(`[executeSvnCommand] 为diff命令添加--force参数`);
+      // 对于diff命令，添加特殊处理以支持各种编码
+      if (command.includes('diff')) {
+        if (!command.includes('--force')) {
+          command = `${command} --force`;
+        }
+        // 添加编码相关参数
+        if (!command.includes('--internal-diff')) {
+          command = `${command} --internal-diff`;
+        }
+        this.outputChannel.appendLine(`[executeSvnCommand] 为diff命令添加编码支持参数`);
+      }
+      
+      // 对于log命令，确保使用UTF-8输出
+      if (command.includes('log')) {
+        if (!command.includes('--xml') && useXml) {
+          // XML输出时已经包含编码信息
+        }
       }
       
       // 记录最终命令
-      const finalCommand = `svn ${command} ${xmlFlag}`;
+      const finalCommand = `svn ${command} ${xmlFlag}`.trim();
       this.outputChannel.appendLine(`[executeSvnCommand] 最终命令: ${finalCommand}`);
       
       // 执行命令
@@ -70,46 +263,134 @@ export class SvnService {
           { 
             cwd: path, 
             env,
-            maxBuffer: 50 * 1024 * 1024 // 增加缓冲区大小到50MB
+            maxBuffer: 50 * 1024 * 1024, // 增加缓冲区大小到50MB
+            encoding: 'utf8' as BufferEncoding  // 显式指定编码
           },
           (error, stdout, stderr) => {
             if (error) {
               this.outputChannel.appendLine(`[executeSvnCommand] 命令执行失败，错误码: ${error.code}`);
               if (stderr) {
-                this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${stderr}`);
-                reject(new Error(`SVN错误: ${stderr}`));
+                // 尝试编码转换
+                const convertedStderr = this.processCommandOutput(stderr);
+                this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${convertedStderr}`);
+                reject(new Error(`SVN错误: ${convertedStderr}`));
               } else {
                 this.outputChannel.appendLine(`[executeSvnCommand] 错误信息: ${error.message}`);
                 reject(error);
               }
             } else {
-              this.outputChannel.appendLine(`[executeSvnCommand] 命令执行成功，输出长度: ${stdout.length} 字节`);
-              if (stdout.length < 1000) {
-                this.outputChannel.appendLine(`[executeSvnCommand] 输出内容: ${stdout.replace(/\n/g, '\\n')}`);
+              // 处理输出编码
+              const processedOutput = this.processCommandOutput(stdout);
+              
+              this.outputChannel.appendLine(`[executeSvnCommand] 命令执行成功，输出长度: ${processedOutput.length} 字节`);
+              if (processedOutput.length < 1000) {
+                this.outputChannel.appendLine(`[executeSvnCommand] 输出内容: ${processedOutput.replace(/\n/g, '\\n')}`);
               } else {
-                this.outputChannel.appendLine(`[executeSvnCommand] 输出内容前1000个字符: ${stdout.substring(0, 1000).replace(/\n/g, '\\n')}...`);
+                this.outputChannel.appendLine(`[executeSvnCommand] 输出内容前1000个字符: ${processedOutput.substring(0, 1000).replace(/\n/g, '\\n')}...`);
               }
-              resolve(stdout);
+              resolve(processedOutput);
             }
           }
         );
         
-        // 记录命令输出
-        svnProcess.stdout?.on('data', (data) => {
-          this.outputChannel.appendLine(`[executeSvnCommand] 命令输出: ${data.toString().replace(/\n/g, '\\n')}`);
-        });
+        // 处理实时输出
+        if (svnProcess.stdout) {
+          svnProcess.stdout.on('data', (data) => {
+            const processedData = this.processCommandOutput(data.toString());
+            this.outputChannel.appendLine(`[executeSvnCommand] 命令输出: ${processedData.replace(/\n/g, '\\n')}`);
+          });
+        }
         
-        svnProcess.stderr?.on('data', (data) => {
-          this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${data.toString().replace(/\n/g, '\\n')}`);
-        });
+        if (svnProcess.stderr) {
+          svnProcess.stderr.on('data', (data) => {
+            const processedData = this.processCommandOutput(data.toString());
+            this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${processedData.replace(/\n/g, '\\n')}`);
+          });
+        }
       });
     } catch (error: any) {
       this.outputChannel.appendLine(`[executeSvnCommand] 捕获到异常: ${error.message}`);
       if (error.stderr) {
-        this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${error.stderr}`);
-        throw new Error(`SVN错误: ${error.stderr}`);
+        const convertedStderr = this.processCommandOutput(error.stderr);
+        this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${convertedStderr}`);
+        throw new Error(`SVN错误: ${convertedStderr}`);
       }
       throw error;
+    }
+  }
+
+  /**
+   * 处理命令输出的编码
+   * @param output 原始输出
+   * @returns 处理后的输出
+   */
+  private processCommandOutput(output: string): string {
+    try {
+      // 检查是否包含乱码字符
+      if (output.includes('\uFFFD') || this.hasGarbledText(output)) {
+        this.outputChannel.appendLine(`[processCommandOutput] 检测到可能的编码问题，尝试修复`);
+        
+        // 尝试不同的编码解析
+        return this.fixEncodingIssues(output);
+      }
+      
+      return output;
+    } catch (error) {
+      this.outputChannel.appendLine(`[processCommandOutput] 处理输出编码失败: ${error}`);
+      return output; // 处理失败时返回原输出
+    }
+  }
+
+  /**
+   * 检测是否包含乱码文本
+   * @param text 文本内容
+   * @returns 是否包含乱码
+   */
+  private hasGarbledText(text: string): boolean {
+    // 检测常见的乱码模式
+    const garbledPatterns = [
+      /[\u00C0-\u00FF]{2,}/,  // 连续的扩展ASCII字符
+      /\?{2,}/,              // 连续的问号
+      /\uFFFD/,              // 替换字符
+      /[\u0080-\u00FF]{3,}/  // 连续的高位字符
+    ];
+    
+    return garbledPatterns.some(pattern => pattern.test(text));
+  }
+
+  /**
+   * 修复编码问题
+   * @param text 有问题的文本
+   * @returns 修复后的文本
+   */
+  private fixEncodingIssues(text: string): string {
+    try {
+      // 尝试将文本重新编码
+      const buffer = Buffer.from(text, 'latin1');
+      
+      // 尝试不同的编码
+      const encodings = ['utf8', 'gbk', 'gb2312', 'big5'];
+      
+      for (const encoding of encodings) {
+        try {
+          const decoded = buffer.toString(encoding as BufferEncoding);
+          
+          // 检查解码结果是否包含中文字符且没有乱码
+          if (/[\u4e00-\u9fff]/.test(decoded) && !decoded.includes('\uFFFD')) {
+            this.outputChannel.appendLine(`[fixEncodingIssues] 使用编码 ${encoding} 成功修复`);
+            return decoded;
+          }
+        } catch {
+          continue;
+        }
+      }
+      
+      // 如果所有编码都失败，返回原文本
+      this.outputChannel.appendLine(`[fixEncodingIssues] 无法修复编码问题，返回原文本`);
+      return text;
+    } catch (error) {
+      this.outputChannel.appendLine(`[fixEncodingIssues] 修复编码失败: ${error}`);
+      return text;
     }
   }
 

@@ -333,9 +333,43 @@ export class SvnCommitPanel {
         }
         .diff-line-add {
           color: var(--vscode-gitDecoration-addedResourceForeground);
+          background-color: var(--vscode-diffEditor-insertedTextBackground, rgba(155, 185, 85, 0.2));
         }
         .diff-line-delete {
           color: var(--vscode-gitDecoration-deletedResourceForeground);
+          background-color: var(--vscode-diffEditor-removedTextBackground, rgba(255, 0, 0, 0.2));
+        }
+        .diff-line-info {
+          color: var(--vscode-editorInfo-foreground);
+          background-color: var(--vscode-editorInfo-background, rgba(0, 122, 204, 0.1));
+          font-weight: bold;
+        }
+        .diff-line-header {
+          color: var(--vscode-descriptionForeground);
+          font-weight: bold;
+          border-bottom: 1px solid var(--vscode-panel-border);
+        }
+        .diff-line-index {
+          color: var(--vscode-editorWarning-foreground);
+          font-weight: bold;
+        }
+        .diff-line-context {
+          color: var(--vscode-foreground);
+        }
+        .no-changes {
+          color: var(--vscode-descriptionForeground);
+          font-style: italic;
+          text-align: center;
+          padding: 20px;
+        }
+        .encoding-info {
+          background-color: var(--vscode-editorWidget-background);
+          border: 1px solid var(--vscode-editorWidget-border);
+          padding: 8px;
+          margin-bottom: 10px;
+          border-radius: 3px;
+          font-size: 0.9em;
+          color: var(--vscode-descriptionForeground);
         }
       </style>
     </head>
@@ -511,29 +545,116 @@ export class SvnCommitPanel {
     </html>`;
   }
 
+  /**
+   * 格式化差异内容用于HTML显示
+   * @param content 差异内容
+   * @returns 格式化后的HTML字符串
+   */
   private formatDiffContent(content: string): string {
     if (!content) {
       return '<div class="no-changes">无差异内容</div>';
     }
 
-    return content.split('\n').map(line => {
+    // 确保内容是有效的UTF-8字符串
+    const processedContent = this.ensureUtf8Content(content);
+
+    return processedContent.split('\n').map(line => {
+      // 转义HTML特殊字符，防止XSS攻击
+      const escapedLine = this.escapeHtml(line);
+      
       if (line.startsWith('+')) {
-        return `<div class="diff-line-add">${this.escapeHtml(line)}</div>`;
+        return `<div class="diff-line-add">${escapedLine}</div>`;
       } else if (line.startsWith('-')) {
-        return `<div class="diff-line-delete">${this.escapeHtml(line)}</div>`;
+        return `<div class="diff-line-delete">${escapedLine}</div>`;
+      } else if (line.startsWith('@@')) {
+        return `<div class="diff-line-info">${escapedLine}</div>`;
+      } else if (line.startsWith('+++') || line.startsWith('---')) {
+        return `<div class="diff-line-header">${escapedLine}</div>`;
+      } else if (line.startsWith('Index:')) {
+        return `<div class="diff-line-index">${escapedLine}</div>`;
       } else {
-        return `<div>${this.escapeHtml(line)}</div>`;
+        return `<div class="diff-line-context">${escapedLine}</div>`;
       }
     }).join('');
   }
 
+  /**
+   * 确保内容是有效的UTF-8编码
+   * @param content 原始内容
+   * @returns 处理后的UTF-8内容
+   */
+  private ensureUtf8Content(content: string): string {
+    try {
+      // 检查是否包含乱码字符
+      if (content.includes('\uFFFD') || this.hasGarbledCharacters(content)) {
+        // 尝试重新编码
+        return this.fixContentEncoding(content);
+      }
+      return content;
+    } catch (error) {
+      console.warn('编码处理失败，使用原内容:', error);
+      return content;
+    }
+  }
+
+  /**
+   * 检测是否包含乱码字符
+   * @param content 内容
+   * @returns 是否包含乱码
+   */
+  private hasGarbledCharacters(content: string): boolean {
+    // 检测常见乱码模式
+    const garbledPatterns = [
+      /[\u00C0-\u00FF]{2,}/,  // 连续的扩展ASCII字符
+      /\?{3,}/,              // 连续的问号（可能是编码错误导致的）
+      /[\u0080-\u00FF]{3,}/  // 连续的高位字符
+    ];
+    
+    return garbledPatterns.some(pattern => pattern.test(content));
+  }
+
+  /**
+   * 修复内容编码问题
+   * @param content 有问题的内容
+   * @returns 修复后的内容
+   */
+  private fixContentEncoding(content: string): string {
+    try {
+      // 尝试将内容重新编码
+      const buffer = Buffer.from(content, 'latin1');
+      
+      // 尝试常见的中文编码
+      const encodings = ['utf8', 'gbk', 'gb2312', 'big5'];
+      
+      for (const encoding of encodings) {
+        try {
+          const decoded = buffer.toString(encoding as BufferEncoding);
+          
+          // 检查解码结果是否包含中文字符且没有乱码
+          if (/[\u4e00-\u9fff]/.test(decoded) && !decoded.includes('\uFFFD')) {
+            return decoded;
+          }
+        } catch {
+          continue;
+        }
+      }
+      
+      // 如果所有编码都失败，返回原内容
+      return content;
+    } catch (error) {
+      return content;
+    }
+  }
+
+  /**
+   * 转义HTML特殊字符
+   * @param text 原始文本
+   * @returns 转义后的文本
+   */
   private escapeHtml(text: string): string {
-    return text
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#039;");
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   /**

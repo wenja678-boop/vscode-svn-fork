@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
   "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.8.0",
+  "version": "4.8.3",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -281,6 +281,47 @@
             "target"
           ],
           "description": "排除的文件夹列表"
+        },
+        "vscode-svn.defaultFileEncoding": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "utf8",
+            "gbk",
+            "gb2312",
+            "big5",
+            "latin1"
+          ],
+          "default": "auto",
+          "description": "默认文件编码格式。auto表示自动检测，其他选项为强制使用指定编码"
+        },
+        "vscode-svn.forceUtf8Output": {
+          "type": "boolean",
+          "default": true,
+          "description": "强制SVN命令输出使用UTF-8编码。建议保持开启以避免中文乱码"
+        },
+        "vscode-svn.enableEncodingDetection": {
+          "type": "boolean",
+          "default": true,
+          "description": "启用文件编码自动检测。关闭后将使用默认编码"
+        },
+        "vscode-svn.encodingFallbacks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "utf8",
+            "gbk",
+            "gb2312",
+            "big5"
+          ],
+          "description": "编码检测失败时的备用编码列表"
+        },
+        "vscode-svn.showEncodingInfo": {
+          "type": "boolean",
+          "default": false,
+          "description": "在差异对比界面显示文件编码信息"
         }
       }
     }
