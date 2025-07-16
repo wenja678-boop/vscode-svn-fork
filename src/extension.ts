@@ -775,172 +775,6 @@ async function configureAI(): Promise<void> {
   }
 }
 
-/**
- * 配置文件编码
- */
-async function configureEncoding(): Promise<void> {
-  try {
-    const config = vscode.workspace.getConfiguration('vscode-svn');
-    const currentEncoding = config.get<string>('encoding', 'utf8');
-    const currentLocale = config.get<string>('svnLocale', 'en_US.UTF-8');
-    
-    // 显示当前编码设置
-    await vscode.window.showInformationMessage(
-      `当前编码设置：\n文件编码: ${currentEncoding}\nSVN语言环境: ${currentLocale}`,
-      { modal: false }
-    );
-    
-    // 让用户选择配置项
-    const option = await vscode.window.showQuickPick([
-      '设置文件编码格式',
-      '设置SVN语言环境',
-      '推荐设置（GB2312）',
-      '重置为默认设置（UTF-8）'
-    ], {
-      placeHolder: '选择要配置的编码选项'
-    });
-    
-    if (!option) {
-      return;
-    }
-    
-    switch (option) {
-      case '设置文件编码格式':
-        await configureFileEncoding();
-        break;
-      case '设置SVN语言环境':
-        await configureSvnLocale();
-        break;
-      case '推荐设置（GB2312）':
-        await setRecommendedGB2312Settings();
-        break;
-      case '重置为默认设置（UTF-8）':
-        await resetEncodingSettings();
-        break;
-    }
-  } catch (error: any) {
-    vscode.window.showErrorMessage(`配置编码失败: ${error.message}`);
-  }
-}
-
-/**
- * 配置文件编码格式
- */
-async function configureFileEncoding(): Promise<void> {
-  const encodings = [
-    { label: 'UTF-8', description: '通用Unicode编码，支持所有语言' },
-    { label: 'GB2312', description: '简体中文编码，适用于中国大陆' },
-    { label: 'GBK', description: '扩展的中文编码，包含更多中文字符' },
-    { label: 'Big5', description: '繁体中文编码，适用于台湾香港' },
-    { label: 'ASCII', description: '基础ASCII编码，仅支持英文' },
-    { label: 'Latin1', description: 'ISO-8859-1编码，支持西欧语言' }
-  ];
-  
-  const selected = await vscode.window.showQuickPick(encodings, {
-    placeHolder: '选择文件编码格式',
-    matchOnDescription: true
-  });
-  
-  if (selected) {
-    const encoding = selected.label.toLowerCase().replace('-', '');
-    const config = vscode.workspace.getConfiguration('vscode-svn');
-    await config.update('encoding', encoding, vscode.ConfigurationTarget.Global);
-    
-    vscode.window.showInformationMessage(
-      `✅ 文件编码已设置为: ${selected.label}\n\n${selected.description}`,
-      { modal: false }
-    );
-  }
-}
-
-/**
- * 配置SVN语言环境
- */
-async function configureSvnLocale(): Promise<void> {
-  const locales = [
-    { label: 'en_US.UTF-8', description: '英文环境，UTF-8编码' },
-    { label: 'zh_CN.UTF-8', description: '简体中文环境，UTF-8编码' },
-    { label: 'zh_CN.GBK', description: '简体中文环境，GBK编码' },
-    { label: 'zh_CN.GB2312', description: '简体中文环境，GB2312编码' },
-    { label: 'zh_TW.Big5', description: '繁体中文环境，Big5编码' },
-    { label: 'ja_JP.UTF-8', description: '日文环境，UTF-8编码' },
-    { label: 'ko_KR.UTF-8', description: '韩文环境，UTF-8编码' }
-  ];
-  
-  const selected = await vscode.window.showQuickPick(locales, {
-    placeHolder: '选择SVN命令执行的语言环境',
-    matchOnDescription: true
-  });
-  
-  if (selected) {
-    const config = vscode.workspace.getConfiguration('vscode-svn');
-    await config.update('svnLocale', selected.label, vscode.ConfigurationTarget.Global);
-    
-    vscode.window.showInformationMessage(
-      `✅ SVN语言环境已设置为: ${selected.label}\n\n${selected.description}`,
-      { modal: false }
-    );
-  }
-}
-
-/**
- * 设置推荐的GB2312设置
- */
-async function setRecommendedGB2312Settings(): Promise<void> {
-  const confirm = await vscode.window.showInformationMessage(
-    '🎯 将设置以下推荐配置：\n\n' +
-    '• 文件编码: GB2312\n' +
-    '• SVN语言环境: zh_CN.GB2312\n\n' +
-    '这些设置适用于GB2312编码的中文项目，可以解决中文乱码问题。',
-    { modal: true },
-    '应用设置',
-    '取消'
-  );
-  
-  if (confirm === '应用设置') {
-    const config = vscode.workspace.getConfiguration('vscode-svn');
-    await Promise.all([
-      config.update('encoding', 'gb2312', vscode.ConfigurationTarget.Global),
-      config.update('svnLocale', 'zh_CN.GB2312', vscode.ConfigurationTarget.Global)
-    ]);
-    
-    vscode.window.showInformationMessage(
-      '✅ 已应用GB2312推荐设置！\n\n' +
-      '现在查看SVN日志和差异对比时应该能正确显示中文了。\n' +
-      '如果仍有问题，请重启VSCode使设置生效。',
-      { modal: false }
-    );
-  }
-}
-
-/**
- * 重置编码设置为默认值
- */
-async function resetEncodingSettings(): Promise<void> {
-  const confirm = await vscode.window.showWarningMessage(
-    '确定要重置编码设置为默认值吗？\n\n' +
-    '将重置为：\n' +
-    '• 文件编码: UTF-8\n' +
-    '• SVN语言环境: en_US.UTF-8',
-    { modal: true },
-    '重置',
-    '取消'
-  );
-  
-  if (confirm === '重置') {
-    const config = vscode.workspace.getConfiguration('vscode-svn');
-    await Promise.all([
-      config.update('encoding', 'utf8', vscode.ConfigurationTarget.Global),
-      config.update('svnLocale', 'en_US.UTF-8', vscode.ConfigurationTarget.Global)
-    ]);
-    
-    vscode.window.showInformationMessage(
-      '✅ 编码设置已重置为默认值！',
-      { modal: false }
-    );
-  }
-}
-
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -1195,11 +1029,6 @@ export function activate(context: vscode.ExtensionContext) {
     await configureAI();
   });
   
-  // 注册配置编码命令
-  const configureEncodingCommand = vscode.commands.registerCommand('vscode-svn.configureEncoding', async () => {
-    await configureEncoding();
-  });
-  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -1218,8 +1047,7 @@ export function activate(context: vscode.ExtensionContext) {
     showAICacheStatsCommand,
     clearAICacheCommand,
     cleanExpiredAICacheCommand,
-    configureAICommand,
-    configureEncodingCommand
+    configureAICommand
   );
 }
 

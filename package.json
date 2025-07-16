@@ -1,8 +1,8 @@
 {
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
-  "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，支持GB2312/UTF-8/GBK等多种编码，解决中文乱码问题，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.8.1",
+  "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
+  "version": "4.8.0",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -104,10 +104,6 @@
       {
         "command": "vscode-svn.configureAI",
         "title": "SVN: 配置AI服务"
-      },
-      {
-        "command": "vscode-svn.configureEncoding",
-        "title": "SVN: 设置文件编码"
       }
     ],
     "menus": {
@@ -218,10 +214,6 @@
         {
           "command": "vscode-svn.configureAI",
           "group": "svn"
-        },
-        {
-          "command": "vscode-svn.configureEncoding",
-          "group": "svn"
         }
       ],
       "view/title": [
@@ -289,35 +281,6 @@
             "target"
           ],
           "description": "排除的文件夹列表"
-        },
-        "vscode-svn.encoding": {
-          "type": "string",
-          "enum": [
-            "utf8",
-            "utf-8",
-            "gb2312",
-            "gbk",
-            "big5",
-            "ascii",
-            "latin1",
-            "iso-8859-1"
-          ],
-          "default": "utf8",
-          "description": "文件编码格式，支持utf8、gb2312、gbk等。设置后将用于SVN命令执行和文件读取"
-        },
-        "vscode-svn.svnLocale": {
-          "type": "string",
-          "enum": [
-            "en_US.UTF-8",
-            "zh_CN.UTF-8",
-            "zh_CN.GBK",
-            "zh_CN.GB2312",
-            "zh_TW.Big5",
-            "ja_JP.UTF-8",
-            "ko_KR.UTF-8"
-          ],
-          "default": "en_US.UTF-8",
-          "description": "SVN命令执行时的语言环境设置，影响SVN输出的编码格式"
         }
       }
     }

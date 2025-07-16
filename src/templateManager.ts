@@ -167,11 +167,7 @@ export class TemplateManager {
      */
     private async readFile(filePath: string): Promise<string> {
         return new Promise((resolve, reject) => {
-            // 获取用户配置的编码设置
-            const config = vscode.workspace.getConfiguration('vscode-svn');
-            const encoding = config.get<string>('encoding', 'utf8');
-            
-            fs.readFile(filePath, encoding as BufferEncoding, (err, data) => {
+            fs.readFile(filePath, 'utf8', (err, data) => {
                 if (err) {
                     reject(err);
                 } else {
