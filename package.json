@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
   "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.8.4",
+  "version": "4.8.5",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -13,23 +13,24 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "onCommand:vscode-svn.uploadFile",
-    "onCommand:vscode-svn.uploadFolder",
-    "onCommand:vscode-svn.commitFile",
-    "onCommand:vscode-svn.revertFile",
-    "onCommand:vscode-svn.revertFolder",
-    "onCommand:vscode-svn.setSvnRoot",
-    "onCommand:vscode-svn.clearSvnRoot",
-    "onCommand:vscode-svn.updateFile",
-    "onCommand:vscode-svn.updateDirectory",
-    "onCommand:vscode-svn.updateWorkspace",
-    "onCommand:vscode-svn.viewLog",
-    "onCommand:vscode-svn.showLocalRevision",
-    "onCommand:vscode-svn.configureFilter",
-    "onCommand:vscode-svn.showFilterInfo",
-    "workspaceContains:.svn"
-  ],
+      "onStartupFinished",
+      "onCommand:vscode-svn.uploadFile",
+      "onCommand:vscode-svn.uploadFolder",
+      "onCommand:vscode-svn.commitFile",
+      "onCommand:vscode-svn.revertFile",
+      "onCommand:vscode-svn.revertFolder",
+      "onCommand:vscode-svn.setSvnRoot",
+      "onCommand:vscode-svn.clearSvnRoot",
+      "onCommand:vscode-svn.updateFile",
+      "onCommand:vscode-svn.updateDirectory",
+      "onCommand:vscode-svn.updateWorkspace",
+      "onCommand:vscode-svn.viewLog",
+      "onCommand:vscode-svn.showLocalRevision",
+      "onCommand:vscode-svn.configureFilter",
+      "onCommand:vscode-svn.showFilterInfo",
+      "onCommand:vscode-svn.checkout",
+      "workspaceContains:.svn"
+    ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -104,6 +105,10 @@
       {
         "command": "vscode-svn.configureAI",
         "title": "SVN: 配置AI服务"
+      },
+      {
+        "command": "vscode-svn.checkout",
+        "title": "SVN: 检出|Checkout 地址"
       }
     ],
     "menus": {
@@ -157,6 +162,11 @@
           "command": "vscode-svn.setSvnRoot",
           "when": "explorerResourceIsFolder",
           "group": "2_svn@9"
+        },
+        {
+          "command": "vscode-svn.checkout",
+          "when": "explorerResourceIsFolder || !resourceScheme",
+          "group": "2_svn@10"
         }
       ],
       "editor/context": [
@@ -213,6 +223,10 @@
         },
         {
           "command": "vscode-svn.configureAI",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.checkout",
           "group": "svn"
         }
       ],

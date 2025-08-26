@@ -1188,4 +1188,454 @@ export class SvnService {
       throw new Error('SVN提交失败：工作副本版本过时，需要先更新');
     }
   }
+
+  /**
+   * 测试SVN连接
+   * @param svnUrl SVN地址
+   * @param username 用户名（可选）
+   * @param password 密码（可选）
+   * @returns 连接测试结果
+   */
+  public async testConnection(svnUrl: string, username?: string, password?: string): Promise<{ success: boolean; message: string }> {
+    this.outputChannel.appendLine(`\n[testConnection] 测试SVN连接: ${svnUrl}`);
+    
+    try {
+      // 记录认证信息
+      if (username && password) {
+        this.outputChannel.appendLine(`[testConnection] 使用自定义认证信息，用户名: ${username}`);
+      } else {
+        this.outputChannel.appendLine(`[testConnection] 使用默认认证信息`);
+      }
+      
+      // 构建参数数组
+      const args = ['info', svnUrl];
+      if (username && password) {
+        args.push('--username', username, '--password', password);
+      }
+      args.push('--non-interactive', '--trust-server-cert');
+      
+      this.outputChannel.appendLine(`[testConnection] 执行参数: ${JSON.stringify(args)}`);
+      
+      // 获取增强的环境变量配置
+      const env = this.getEnhancedEnvironment();
+      
+      const result = await new Promise<string>((resolve, reject) => {
+        const svnProcess = cp.spawn('svn', args, {
+          env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+        
+        let stdout = '';
+        let stderr = '';
+        
+        svnProcess.stdout?.on('data', (data) => {
+          stdout += data.toString();
+        });
+        
+        svnProcess.stderr?.on('data', (data) => {
+          stderr += data.toString();
+        });
+        
+        svnProcess.on('close', (code) => {
+          if (code === 0) {
+            const processedOutput = this.processCommandOutput(stdout);
+            this.outputChannel.appendLine(`[testConnection] 连接测试成功`);
+            resolve(processedOutput);
+          } else {
+            const convertedStderr = this.processCommandOutput(stderr);
+            this.outputChannel.appendLine(`[testConnection] 命令执行失败，代码: ${code}`);
+            this.outputChannel.appendLine(`[testConnection] 错误输出: ${convertedStderr}`);
+            reject(new Error(convertedStderr));
+          }
+        });
+        
+        svnProcess.on('error', (error) => {
+          this.outputChannel.appendLine(`[testConnection] 进程错误: ${error.message}`);
+          reject(error);
+        });
+        
+        // 30秒超时
+        setTimeout(() => {
+          svnProcess.kill();
+          reject(new Error('连接超时'));
+        }, 30000);
+      });
+      
+      // 解析结果，提取有用信息
+      const lines = result.split('\n');
+      let repoInfo = '';
+      
+      for (const line of lines) {
+        if (line.includes('Repository Root:') || line.includes('仓库根:')) {
+          repoInfo += line.trim() + '\n';
+        } else if (line.includes('Revision:') || line.includes('修订版本:')) {
+          repoInfo += line.trim() + '\n';
+        } else if (line.includes('Last Changed Date:') || line.includes('最后修改日期:')) {
+          repoInfo += line.trim() + '\n';
+        }
+      }
+      
+      return {
+        success: true,
+        message: repoInfo || '连接成功，仓库可访问'
+      };
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[testConnection] 连接测试失败: ${error.message}`);
+      
+      // 分析错误类型并提供友好的错误信息
+      let friendlyMessage = error.message;
+      
+      if (error.message.includes('E170001') || error.message.includes('Authentication failed')) {
+        friendlyMessage = '认证失败：用户名或密码错误';
+      } else if (error.message.includes('E170013') || error.message.includes('Unable to connect')) {
+        friendlyMessage = '无法连接到SVN服务器：请检查网络连接和服务器地址';
+      } else if (error.message.includes('E200014') || error.message.includes('Not found')) {
+        friendlyMessage = 'SVN地址不存在：请检查仓库地址是否正确';
+      } else if (error.message.includes('timeout')) {
+        friendlyMessage = '连接超时：服务器响应时间过长，请检查网络连接';
+      } else if (error.message.includes('certificate')) {
+        friendlyMessage = 'SSL证书错误：服务器证书验证失败';
+      }
+      
+      return {
+        success: false,
+        message: friendlyMessage
+      };
+    }
+  }
+
+  /**
+   * 获取SVN仓库中的文件总数
+   * @param svnUrl SVN仓库地址
+   * @param username 用户名（可选）
+   * @param password 密码（可选）
+   * @returns 文件总数，失败时返回-1
+   */
+  public async getRepositoryFileCount(
+    svnUrl: string,
+    username?: string,
+    password?: string
+  ): Promise<number> {
+    try {
+      this.outputChannel.appendLine(`[getFileCount] 正在获取仓库文件总数: ${svnUrl}`);
+      
+      // 获取增强的环境变量配置
+      const env = this.getEnhancedEnvironment();
+      
+      return await new Promise<number>((resolve) => {
+        // 构建命令参数
+        const args = ['list', '-R', svnUrl];
+        if (username && password) {
+          args.push('--username', username, '--password', password);
+        }
+        args.push('--non-interactive', '--trust-server-cert');
+        
+        this.outputChannel.appendLine(`[getFileCount] 执行命令参数: ${JSON.stringify(args)}`);
+        
+        // 执行SVN list命令
+        const svnProcess = cp.spawn('svn', args, {
+          env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+        
+        let outputBuffer = '';
+        let errorBuffer = '';
+        
+        // 处理标准输出
+        svnProcess.stdout?.on('data', (data) => {
+          const output = this.processCommandOutput(data.toString());
+          outputBuffer += output;
+        });
+        
+        // 处理错误输出
+        svnProcess.stderr?.on('data', (data) => {
+          const error = this.processCommandOutput(data.toString());
+          errorBuffer += error;
+        });
+        
+        // 处理进程退出
+        svnProcess.on('close', (code) => {
+          if (code === 0) {
+            // 成功获取列表，统计文件数量
+            const lines = outputBuffer.split('\n').filter(line => line.trim() !== '');
+            // 过滤掉目录（以/结尾的条目）
+            const fileCount = lines.filter(line => !line.endsWith('/')).length;
+            
+            this.outputChannel.appendLine(`[getFileCount] 成功获取文件总数: ${fileCount}`);
+            resolve(fileCount);
+          } else {
+            // 获取失败
+            this.outputChannel.appendLine(`[getFileCount] 获取文件总数失败: ${errorBuffer}`);
+            resolve(-1);
+          }
+        });
+        
+        // 处理进程错误
+        svnProcess.on('error', (error) => {
+          this.outputChannel.appendLine(`[getFileCount] 进程错误: ${error.message}`);
+          resolve(-1);
+        });
+        
+        // 设置超时（2分钟）
+        setTimeout(() => {
+          svnProcess.kill();
+          this.outputChannel.appendLine('[getFileCount] 获取文件总数超时');
+          resolve(-1);
+        }, 2 * 60 * 1000); // 2分钟超时
+      });
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[getFileCount] 获取文件总数异常: ${error.message}`);
+      return -1;
+    }
+  }
+
+  /**
+   * 执行SVN检出操作
+   * @param svnUrl SVN地址
+   * @param targetDirectory 目标目录
+   * @param username 用户名（可选）
+   * @param password 密码（可选）
+   * @param progressCallback 进度回调函数
+   * @returns 检出操作结果
+   */
+  public async checkout(
+    svnUrl: string, 
+    targetDirectory: string, 
+    username?: string, 
+    password?: string,
+    progressCallback?: (message: string, progress?: number) => void
+  ): Promise<{ success: boolean; message: string }> {
+    this.showOutputChannel('SVN检出操作');
+    this.outputChannel.appendLine(`SVN地址: ${svnUrl}`);
+    this.outputChannel.appendLine(`目标目录: ${targetDirectory}`);
+    
+    try {
+      // 检查目标目录是否存在，如果不存在则创建
+      if (!await fsExists(targetDirectory)) {
+        await fs.promises.mkdir(targetDirectory, { recursive: true });
+        this.outputChannel.appendLine(`创建目标目录: ${targetDirectory}`);
+      }
+      
+      // 检查目标目录是否为空（或只包含.svn目录）
+      const files = await fs.promises.readdir(targetDirectory);
+      const nonSvnFiles = files.filter(file => file !== '.svn');
+      
+      if (nonSvnFiles.length > 0) {
+        this.outputChannel.appendLine(`警告: 目标目录不为空，包含 ${nonSvnFiles.length} 个文件/文件夹`);
+        // 这里可以选择是否继续，但通常SVN checkout可以在非空目录中进行
+      }
+      
+      // 记录认证信息
+      if (username && password) {
+        this.outputChannel.appendLine(`使用自定义认证信息，用户名: ${username}`);
+      } else {
+        this.outputChannel.appendLine(`使用默认认证信息`);
+      }
+      
+      // 先获取文件总数，用于准确计算进度
+      let totalFileCount = -1;
+      if (progressCallback) {
+        progressCallback('正在连接SVN服务器...', 5);
+        progressCallback('正在获取仓库文件信息...', 10);
+        
+        totalFileCount = await this.getRepositoryFileCount(svnUrl, username, password);
+        if (totalFileCount > 0) {
+          this.outputChannel.appendLine(`仓库包含 ${totalFileCount} 个文件`);
+          progressCallback(`发现 ${totalFileCount} 个文件，准备开始检出...`, 15);
+        } else {
+          this.outputChannel.appendLine(`无法获取文件总数，将使用传统进度计算方式`);
+          progressCallback('准备开始检出...', 15);
+        }
+      }
+      
+      // 获取增强的环境变量配置
+      const env = this.getEnhancedEnvironment();
+      
+      return await new Promise<{ success: boolean; message: string }>((resolve, reject) => {
+        // 正确解析命令参数，避免引号问题
+        const args = ['checkout', svnUrl, targetDirectory];
+        if (username && password) {
+          args.push('--username', username, '--password', password);
+        }
+        args.push('--non-interactive', '--trust-server-cert');
+        
+        this.outputChannel.appendLine(`[checkout] 实际执行参数: ${JSON.stringify(args)}`);
+        
+        const svnProcess = cp.spawn('svn', args, {
+          cwd: path.dirname(targetDirectory),
+          env,
+          stdio: ['pipe', 'pipe', 'pipe']
+        });
+        
+        let outputBuffer = '';
+        let errorBuffer = '';
+        let currentProgress = 15;  // 从15%开始，因为前面已经完成了文件总数获取
+        let checkedOutFileCount = 0;  // 已检出的文件数量
+        
+        // 处理标准输出
+        svnProcess.stdout?.on('data', (data) => {
+          const output = this.processCommandOutput(data.toString());
+          outputBuffer += output;
+          this.outputChannel.appendLine(`[checkout] 输出: ${output.replace(/\n/g, '\\n')}`);
+          
+          // 解析进度信息
+          if (progressCallback) {
+            if (output.includes('A ') || output.includes('添加')) {
+              checkedOutFileCount++;
+              
+              // 根据文件总数计算准确进度
+              if (totalFileCount > 0) {
+                // 15% - 95% 的范围用于文件检出进度
+                const fileProgress = Math.min((checkedOutFileCount / totalFileCount) * 80, 80);
+                currentProgress = 15 + fileProgress;
+              } else {
+                // 传统方式：每个文件增加1%，最大90%
+                currentProgress = Math.min(currentProgress + 1, 90);
+              }
+              
+              const match = output.match(/A\s+(.+)/);
+              if (match) {
+                const fileName = path.basename(match[1]);
+                if (totalFileCount > 0) {
+                  progressCallback(`正在检出: ${fileName} (${checkedOutFileCount}/${totalFileCount})`, Math.round(currentProgress));
+                } else {
+                  progressCallback(`正在检出: ${fileName}`, Math.round(currentProgress));
+                }
+              } else {
+                if (totalFileCount > 0) {
+                  progressCallback(`正在检出文件... (${checkedOutFileCount}/${totalFileCount})`, Math.round(currentProgress));
+                } else {
+                  progressCallback('正在检出文件...', Math.round(currentProgress));
+                }
+              }
+            } else if (output.includes('Checked out') || output.includes('检出完成')) {
+              progressCallback('检出完成', 100);
+            }
+          }
+        });
+        
+        // 处理错误输出
+        svnProcess.stderr?.on('data', (data) => {
+          const error = this.processCommandOutput(data.toString());
+          errorBuffer += error;
+          this.outputChannel.appendLine(`[checkout] 错误: ${error.replace(/\n/g, '\\n')}`);
+          
+          // 某些SVN版本会将进度信息输出到stderr
+          if (progressCallback && (error.includes('A ') || error.includes('添加'))) {
+            checkedOutFileCount++;
+            
+            // 根据文件总数计算准确进度
+            if (totalFileCount > 0) {
+              // 15% - 95% 的范围用于文件检出进度
+              const fileProgress = Math.min((checkedOutFileCount / totalFileCount) * 80, 80);
+              currentProgress = 15 + fileProgress;
+            } else {
+              // 传统方式：每个文件增加1%，最大90%
+              currentProgress = Math.min(currentProgress + 1, 90);
+            }
+            
+            const match = error.match(/A\s+(.+)/);
+            if (match) {
+              const fileName = path.basename(match[1]);
+              if (totalFileCount > 0) {
+                progressCallback(`正在检出: ${fileName} (${checkedOutFileCount}/${totalFileCount})`, Math.round(currentProgress));
+              } else {
+                progressCallback(`正在检出: ${fileName}`, Math.round(currentProgress));
+              }
+            }
+          }
+        });
+        
+        // 处理进程退出
+        svnProcess.on('close', (code) => {
+          this.outputChannel.appendLine(`[checkout] 进程退出，代码: ${code}`);
+          
+          if (code === 0) {
+            // 检出成功
+            const successMessage = `SVN检出成功完成\n目标目录: ${targetDirectory}`;
+            this.outputChannel.appendLine(successMessage);
+            this.outputChannel.appendLine('========== SVN检出操作完成 ==========');
+            
+            if (progressCallback) {
+              progressCallback('检出完成', 100);
+            }
+            
+            resolve({
+              success: true,
+              message: successMessage
+            });
+          } else {
+            // 检出失败
+            let errorMessage = errorBuffer || '检出操作失败';
+            
+            // 分析错误类型
+            if (errorBuffer.includes('E170001') || errorBuffer.includes('Authentication failed')) {
+              errorMessage = '认证失败：用户名或密码错误';
+            } else if (errorBuffer.includes('E170013') || errorBuffer.includes('Unable to connect')) {
+              errorMessage = '无法连接到SVN服务器：请检查网络连接和服务器地址';
+            } else if (errorBuffer.includes('E200014') || errorBuffer.includes('Not found')) {
+              errorMessage = 'SVN地址不存在：请检查仓库地址是否正确';
+            } else if (errorBuffer.includes('E155000') || errorBuffer.includes('already a working copy')) {
+              errorMessage = '目标目录已经是一个SVN工作副本';
+            }
+            
+            this.outputChannel.appendLine(`错误: ${errorMessage}`);
+            this.outputChannel.appendLine('========== SVN检出操作失败 ==========');
+            
+            if (progressCallback) {
+              progressCallback('检出失败', 0);
+            }
+            
+            resolve({
+              success: false,
+              message: errorMessage
+            });
+          }
+        });
+        
+        // 处理进程错误
+        svnProcess.on('error', (error) => {
+          this.outputChannel.appendLine(`[checkout] 进程错误: ${error.message}`);
+          this.outputChannel.appendLine('========== SVN检出操作失败 ==========');
+          
+          if (progressCallback) {
+            progressCallback('检出失败', 0);
+          }
+          
+          resolve({
+            success: false,
+            message: `检出进程启动失败: ${error.message}`
+          });
+        });
+        
+        // 设置超时（30分钟）
+        setTimeout(() => {
+          svnProcess.kill();
+          this.outputChannel.appendLine('[checkout] 检出操作超时');
+          this.outputChannel.appendLine('========== SVN检出操作超时 ==========');
+          
+          if (progressCallback) {
+            progressCallback('检出超时', 0);
+          }
+          
+          resolve({
+            success: false,
+            message: '检出操作超时（30分钟），可能是文件过多或网络问题'
+          });
+        }, 30 * 60 * 1000); // 30分钟超时
+      });
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[checkout] 检出操作异常: ${error.message}`);
+      this.outputChannel.appendLine('========== SVN检出操作失败 ==========');
+      
+      if (progressCallback) {
+        progressCallback('检出失败', 0);
+      }
+      
+      return {
+        success: false,
+        message: `检出操作失败: ${error.message}`
+      };
+    }
+  }
 }

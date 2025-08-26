@@ -10,6 +10,8 @@ import { SvnLogPanel } from './svnLogPanel';
 import { SvnFilterService } from './filterService';
 import { AiCacheService } from './aiCacheService';
 import { AiService } from './aiService';
+import { SvnCheckoutPanel } from './checkoutPanel';
+import { SvnCheckoutConfigPanel } from './checkoutConfigPanel';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -775,6 +777,45 @@ async function configureAI(): Promise<void> {
   }
 }
 
+/**
+ * SVN检出功能
+ * @param folderUri 文件夹URI（可选）
+ */
+async function checkoutFromSvn(folderUri?: vscode.Uri): Promise<void> {
+  try {
+    // 检查SVN是否已安装
+    if (!await svnService.isSvnInstalled()) {
+      vscode.window.showErrorMessage('未检测到SVN命令行工具，请确保已安装SVN并添加到系统PATH中');
+      return;
+    }
+
+    // 确定检出目标目录
+    let targetDirectory: string;
+    if (folderUri) {
+      targetDirectory = folderUri.fsPath;
+    } else {
+      // 如果没有选择文件夹，使用当前工作区
+      if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        targetDirectory = vscode.workspace.workspaceFolders[0].uri.fsPath;
+      } else {
+        vscode.window.showErrorMessage('请选择一个文件夹或打开工作区');
+        return;
+      }
+    }
+
+    // 显示检出配置面板
+    await SvnCheckoutConfigPanel.createOrShow(
+      vscode.extensions.getExtension('vscode-svn')?.extensionUri || vscode.Uri.file(__dirname),
+      targetDirectory,
+      svnService
+    );
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`SVN检出失败: ${error.message}`);
+  }
+}
+
+
+
 export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
@@ -1029,6 +1070,11 @@ export function activate(context: vscode.ExtensionContext) {
     await configureAI();
   });
   
+  // 注册SVN检出命令
+  const checkoutCommand = vscode.commands.registerCommand('vscode-svn.checkout', async (folderUri?: vscode.Uri) => {
+    await checkoutFromSvn(folderUri);
+  });
+  
   context.subscriptions.push(
     uploadFileCommand,
     uploadFolderCommand,
@@ -1047,7 +1093,8 @@ export function activate(context: vscode.ExtensionContext) {
     showAICacheStatsCommand,
     clearAICacheCommand,
     cleanExpiredAICacheCommand,
-    configureAICommand
+    configureAICommand,
+    checkoutCommand
   );
 }
 
