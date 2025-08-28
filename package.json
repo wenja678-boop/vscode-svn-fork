@@ -2,7 +2,7 @@
   "name": "vscode-svn-ai",
   "displayName": "VSCode SVN - AI智能版本控制",
   "description": "🚀 全平台SVN智能插件：基于原生命令行工具，支持Windows/macOS/Linux，内置AI提交日志生成，可视化差异对比，100%开源透明。无需TortoiseSVN，轻量级高性能！",
-  "version": "4.8.5",
+  "version": "4.8.6",
   "publisher": "pengfeiSummer",
   "icon": "resources/icon.png",
   "engines": {
@@ -109,6 +109,14 @@
       {
         "command": "vscode-svn.checkout",
         "title": "SVN: 检出|Checkout 地址"
+      },
+      {
+        "command": "vscode-svn.manageCredentials",
+        "title": "SVN: 管理认证信息"
+      },
+      {
+        "command": "vscode-svn.clearCredentials",
+        "title": "SVN: 清除认证信息"
       }
     ],
     "menus": {
@@ -228,6 +236,14 @@
         {
           "command": "vscode-svn.checkout",
           "group": "svn"
+        },
+        {
+          "command": "vscode-svn.manageCredentials",
+          "group": "svn"
+        },
+        {
+          "command": "vscode-svn.clearCredentials",
+          "group": "svn"
         }
       ],
       "view/title": [
@@ -336,6 +352,32 @@
           "type": "boolean",
           "default": false,
           "description": "在差异对比界面显示文件编码信息"
+        },
+        "vscode-svn.authenticationConfig.autoSaveCredentials": {
+          "type": "boolean",
+          "default": true,
+          "description": "自动保存SVN认证信息"
+        },
+        "vscode-svn.authenticationConfig.defaultAuthPrompt": {
+          "type": "boolean",
+          "default": true,
+          "description": "认证失败时自动提示输入用户名密码"
+        },
+        "vscode-svn.authenticationConfig.credentialTimeout": {
+          "type": "number",
+          "default": 86400,
+          "description": "认证信息有效期（秒，0表示永不过期）"
+        },
+        "vscode-svn.authenticationConfig.serverPatterns": {
+          "type": "object",
+          "default": {},
+          "description": "服务器URL匹配模式配置",
+          "patternProperties": {
+            ".*": {
+              "type": "string",
+              "description": "匹配模式对应的服务器根URL"
+            }
+          }
         }
       }
     }

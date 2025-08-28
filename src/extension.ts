@@ -12,6 +12,8 @@ import { AiCacheService } from './aiCacheService';
 import { AiService } from './aiService';
 import { SvnCheckoutPanel } from './checkoutPanel';
 import { SvnCheckoutConfigPanel } from './checkoutConfigPanel';
+import { SvnAuthService } from './svnAuthService';
+import { SvnAuthDialog } from './svnAuthDialog';
 
 // SVN服务实例
 let svnService: SvnService;
@@ -820,7 +822,7 @@ export function activate(context: vscode.ExtensionContext) {
   console.log('VSCode SVN 扩展已激活');
   
   // 初始化SVN服务
-  svnService = new SvnService();
+  svnService = new SvnService(context);
   diffProvider = new SvnDiffProvider(svnService);
   logStorage = new CommitLogStorage(context);
   filterService = new SvnFilterService();
@@ -1074,6 +1076,15 @@ export function activate(context: vscode.ExtensionContext) {
   const checkoutCommand = vscode.commands.registerCommand('vscode-svn.checkout', async (folderUri?: vscode.Uri) => {
     await checkoutFromSvn(folderUri);
   });
+
+  // 认证管理命令
+  const manageCredentialsCommand = vscode.commands.registerCommand('vscode-svn.manageCredentials', async () => {
+    await manageCredentials(context);
+  });
+
+  const clearCredentialsCommand = vscode.commands.registerCommand('vscode-svn.clearCredentials', async () => {
+    await clearCredentials(context);
+  });
   
   context.subscriptions.push(
     uploadFileCommand,
@@ -1094,8 +1105,157 @@ export function activate(context: vscode.ExtensionContext) {
     clearAICacheCommand,
     cleanExpiredAICacheCommand,
     configureAICommand,
-    checkoutCommand
+    checkoutCommand,
+    manageCredentialsCommand,
+    clearCredentialsCommand
   );
+}
+
+/**
+ * 管理SVN认证信息
+ */
+async function manageCredentials(context: vscode.ExtensionContext): Promise<void> {
+  try {
+    const authService = new SvnAuthService(context);
+    const credentials = await authService.getAllCredentials();
+    
+    // 创建认证管理面板
+    const panel = SvnAuthDialog.createAuthManagementPanel(
+      context.extensionUri,
+      credentials
+    );
+    
+    // 处理来自webview的消息
+    panel.webview.onDidReceiveMessage(async message => {
+      switch (message.command) {
+        case 'testCredential':
+          try {
+            const credential = credentials[message.url];
+            if (credential) {
+              const result = await authService.validateCredential(
+                message.url,
+                credential.username,
+                credential.password
+              );
+              
+              panel.webview.postMessage({
+                command: 'testResult',
+                url: message.url,
+                success: result.valid,
+                message: result.valid ? '认证信息有效' : result.error
+              });
+            }
+          } catch (error: any) {
+            panel.webview.postMessage({
+              command: 'testResult',
+              url: message.url,
+              success: false,
+              message: `测试失败: ${error.message}`
+            });
+          }
+          break;
+          
+        case 'deleteCredential':
+          try {
+            await authService.removeCredential(message.url);
+            vscode.window.showInformationMessage('认证信息已删除');
+            // 刷新面板
+            const updatedCredentials = await authService.getAllCredentials();
+            panel.webview.html = SvnAuthDialog.createAuthManagementPanel(
+              context.extensionUri,
+              updatedCredentials
+            ).webview.html;
+          } catch (error: any) {
+            vscode.window.showErrorMessage(`删除失败: ${error.message}`);
+          }
+          break;
+          
+        case 'clearAllCredentials':
+          try {
+            await authService.clearAllCredentials();
+            vscode.window.showInformationMessage('所有认证信息已清除');
+            // 刷新面板
+            panel.webview.html = SvnAuthDialog.createAuthManagementPanel(
+              context.extensionUri,
+              {}
+            ).webview.html;
+          } catch (error: any) {
+            vscode.window.showErrorMessage(`清除失败: ${error.message}`);
+          }
+          break;
+          
+        case 'addCredential':
+          // 显示添加认证信息对话框
+          const authResult = await SvnAuthDialog.showAuthDialog('手动添加');
+          if (authResult) {
+            const url = await vscode.window.showInputBox({
+              prompt: '请输入SVN仓库URL',
+              placeHolder: 'http://svn.example.com/repo',
+              validateInput: (value) => {
+                if (!value || value.trim() === '') {
+                  return 'URL不能为空';
+                }
+                return null;
+              }
+            });
+            
+            if (url) {
+              try {
+                await authService.saveCredential(
+                  url.trim(),
+                  authResult.username,
+                  authResult.password,
+                  '手动添加'
+                );
+                vscode.window.showInformationMessage('认证信息已保存');
+                // 刷新面板
+                const updatedCredentials = await authService.getAllCredentials();
+                panel.webview.html = SvnAuthDialog.createAuthManagementPanel(
+                  context.extensionUri,
+                  updatedCredentials
+                ).webview.html;
+              } catch (error: any) {
+                vscode.window.showErrorMessage(`保存失败: ${error.message}`);
+              }
+            }
+          }
+          break;
+          
+        case 'refreshCredentials':
+          // 刷新认证信息列表
+          const refreshedCredentials = await authService.getAllCredentials();
+          panel.webview.html = SvnAuthDialog.createAuthManagementPanel(
+            context.extensionUri,
+            refreshedCredentials
+          ).webview.html;
+          break;
+      }
+    });
+    
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`打开认证管理面板失败: ${error.message}`);
+  }
+}
+
+/**
+ * 清除所有SVN认证信息
+ */
+async function clearCredentials(context: vscode.ExtensionContext): Promise<void> {
+  try {
+    const choice = await vscode.window.showWarningMessage(
+      '确认清除所有保存的SVN认证信息？此操作不可恢复！',
+      '确认清除',
+      '取消'
+    );
+    
+    if (choice === '确认清除') {
+      const authService = new SvnAuthService(context);
+      await authService.clearAllCredentials();
+      vscode.window.showInformationMessage('所有SVN认证信息已清除');
+    }
+  } catch (error: any) {
+    vscode.window.showErrorMessage(`清除认证信息失败: ${error.message}`);
+  }
 }
 
 export function deactivate() {

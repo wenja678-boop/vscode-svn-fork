@@ -48,6 +48,7 @@
 - ✅ **智能更新管理**：文件、目录、工作区全覆盖
 - ✅ **自定义工作副本路径**：灵活配置SVN根目录
 - ✅ **版本冲突智能处理**：自动检测冲突，引导解决
+- ✅ **智能认证管理**：多仓库认证信息自动保存和管理
 
 #### 🤖 **AI智能功能**
 - ✅ **AI提交日志生成**：支持OpenAI、通义千问等主流模型
@@ -108,6 +109,54 @@
 - ⏸️ **支持取消操作**：可随时中断检出过程
 - 🚫 **界面锁定保护**：检出期间锁定相关操作，防止误操作
 - ✅ **完成提示**：检出完成后可选择打开文件夹
+
+### SVN认证管理
+
+🆕 **v4.8.5新功能**：智能多仓库认证信息管理
+
+#### 核心特性
+- 🔐 **项目级认证管理**：支持不同SVN项目的独立认证信息（精确到项目路径）
+- 🎯 **智能URL匹配**：根据完整的SVN项目URL自动匹配对应的认证信息
+- 📁 **权限分离支持**：完美支持基于文件夹权限的SVN认证体系
+- 🔒 **安全存储**：使用VSCode的安全存储API，加密保存认证信息
+- ⚡ **自动重试**：认证失败时自动提示重新输入
+
+#### 认证流程
+1. **优先使用系统认证**：首先尝试使用SVN客户端保存的认证信息
+2. **自动查找已保存认证**：如果系统认证失败，自动查找该仓库的已保存认证
+3. **智能提示输入**：如果没有保存的认证，自动弹出认证输入框
+4. **自动保存认证**：认证成功后，可选择保存认证信息供下次使用
+
+#### 认证管理操作
+- 🎛️ **认证管理面板**：命令面板 → `SVN: 管理认证信息`
+- 🗑️ **清除认证信息**：命令面板 → `SVN: 清除认证信息`
+- ✏️ **手动添加认证**：在管理面板中手动添加新仓库的认证信息
+- 🔍 **测试认证有效性**：一键测试已保存认证信息的有效性
+
+#### 项目级认证示例
+```bash
+# 不同项目使用不同认证信息
+项目A: http://svn.company.com/projects/projectA/trunk → alice/pass123
+项目B: http://svn.company.com/projects/projectB/trunk → bob/pass456
+项目C: http://svn.company.com/projects/projectC/branches/dev → charlie/pass789
+
+# 支持权限继承和匹配
+父项目: http://svn.company.com/projects → admin/adminpass
+子项目: http://svn.company.com/projects/projectA/trunk → 自动使用父项目认证
+```
+
+#### 配置选项
+```json
+{
+  "vscode-svn.authenticationConfig.autoSaveCredentials": true,
+  "vscode-svn.authenticationConfig.defaultAuthPrompt": true,
+  "vscode-svn.authenticationConfig.credentialTimeout": 86400,
+  "vscode-svn.authenticationConfig.serverPatterns": {
+    "*.company.com": "http://svn.company.com",
+    "192.168.*": "http://192.168.1.100"
+  }
+}
+```
 
 #### 支持的SVN地址格式
 ```

@@ -5,6 +5,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { promisify } from 'util';
 import { SvnFilterService } from './filterService';
+import { SvnAuthService } from './svnAuthService';
+import { SvnAuthDialog } from './svnAuthDialog';
 
 const exec = promisify(cp.exec);
 const fsExists = promisify(fs.exists);
@@ -23,10 +25,14 @@ export class SvnService {
   private outputChannel: vscode.OutputChannel;
   private filterService: SvnFilterService;
   private _workingCopyPath: string | undefined;
+  private authService: SvnAuthService | undefined;
 
-  constructor() {
+  constructor(context?: vscode.ExtensionContext) {
     this.outputChannel = vscode.window.createOutputChannel('SVN');
     this.filterService = new SvnFilterService();
+    if (context) {
+      this.authService = new SvnAuthService(context);
+    }
   }
 
   /**
@@ -216,107 +222,218 @@ export class SvnService {
    * @returns 命令执行结果
    */
   public async executeSvnCommand(command: string, path: string, useXml: boolean = false): Promise<string> {
+    return this.executeSvnCommandWithAuth(command, path, useXml);
+  }
+
+  /**
+   * 执行SVN命令（支持认证重试）
+   * @param command SVN命令
+   * @param path 工作目录
+   * @param useXml 是否使用XML输出
+   * @param username 用户名（可选）
+   * @param password 密码（可选）
+   * @returns 命令执行结果
+   */
+  private async executeSvnCommandWithAuth(
+    command: string, 
+    path: string, 
+    useXml: boolean = false,
+    username?: string,
+    password?: string
+  ): Promise<string> {
     try {
       this.outputChannel.appendLine(`\n[executeSvnCommand] 执行SVN命令: svn ${command}`);
       this.outputChannel.appendLine(`[executeSvnCommand] 工作目录: ${path}`);
       
-      // 获取增强的环境变量配置
-      const env = this.getEnhancedEnvironment();
-      
-      this.outputChannel.appendLine(`[executeSvnCommand] 设置编码环境变量: LANG=${env.LANG}, LC_ALL=${env.LC_ALL}`);
-      
-      // 根据 useXml 参数决定是否添加 --xml 标志
-      let xmlFlag = '';
-      if (useXml) {
-        xmlFlag = '--xml';
-        this.outputChannel.appendLine(`[executeSvnCommand] 添加XML输出标志: ${xmlFlag}`);
-      }
-      
-      // 对于diff命令，添加特殊处理以支持各种编码
-      if (command.includes('diff')) {
-        if (!command.includes('--force')) {
-          command = `${command} --force`;
-        }
-        // 添加编码相关参数
-        if (!command.includes('--internal-diff')) {
-          command = `${command} --internal-diff`;
-        }
-        this.outputChannel.appendLine(`[executeSvnCommand] 为diff命令添加编码支持参数`);
-      }
-      
-      // 对于log命令，确保使用UTF-8输出
-      if (command.includes('log')) {
-        if (!command.includes('--xml') && useXml) {
-          // XML输出时已经包含编码信息
-        }
-      }
-      
-      // 记录最终命令
-      const finalCommand = `svn ${command} ${xmlFlag}`.trim();
-      this.outputChannel.appendLine(`[executeSvnCommand] 最终命令: ${finalCommand}`);
-      
-      // 执行命令
-      this.outputChannel.appendLine(`[executeSvnCommand] 开始执行命令...`);
-      return new Promise<string>((resolve, reject) => {
-        const svnProcess = cp.exec(
-          finalCommand, 
-          { 
-            cwd: path, 
-            env,
-            maxBuffer: 50 * 1024 * 1024, // 增加缓冲区大小到50MB
-            encoding: 'utf8' as BufferEncoding  // 显式指定编码
-          },
-          (error, stdout, stderr) => {
-            if (error) {
-              this.outputChannel.appendLine(`[executeSvnCommand] 命令执行失败，错误码: ${error.code}`);
-              if (stderr) {
-                // 尝试编码转换
-                const convertedStderr = this.processCommandOutput(stderr);
-                this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${convertedStderr}`);
-                reject(new Error(`SVN错误: ${convertedStderr}`));
-              } else {
-                this.outputChannel.appendLine(`[executeSvnCommand] 错误信息: ${error.message}`);
-                reject(error);
+      // 步骤1: 首先尝试系统默认认证
+      if (!username && !password) {
+        try {
+          return await this._executeCommand(command, path, useXml);
+        } catch (error: any) {
+          // 检查是否是认证失败
+          if (this._isAuthenticationError(error)) {
+            this.outputChannel.appendLine(`[executeSvnCommand] 系统默认认证失败，尝试获取保存的认证信息`);
+            
+            // 步骤2: 尝试使用保存的认证信息
+            if (this.authService) {
+              const repoUrl = await this.authService.getRepositoryRootUrl(path);
+              if (repoUrl) {
+                const savedCredential = await this.authService.getCredential(repoUrl);
+                if (savedCredential) {
+                  this.outputChannel.appendLine(`[executeSvnCommand] 找到保存的认证信息，用户名: ${savedCredential.username}`);
+                  try {
+                    const result = await this._executeCommand(command, path, useXml, savedCredential.username, savedCredential.password);
+                    // 更新最后使用时间
+                    await this.authService.updateLastUsed(repoUrl);
+                    return result;
+                  } catch (authError: any) {
+                    if (this._isAuthenticationError(authError)) {
+                      this.outputChannel.appendLine(`[executeSvnCommand] 保存的认证信息已失效，需要重新输入`);
+                      // 删除失效的认证信息
+                      await this.authService.removeCredential(repoUrl);
+                    } else {
+                      throw authError; // 不是认证错误，直接抛出
+                    }
+                  }
+                }
               }
-            } else {
-              // 处理输出编码
-              const processedOutput = this.processCommandOutput(stdout);
               
-              this.outputChannel.appendLine(`[executeSvnCommand] 命令执行成功，输出长度: ${processedOutput.length} 字节`);
-              if (processedOutput.length < 1000) {
-                this.outputChannel.appendLine(`[executeSvnCommand] 输出内容: ${processedOutput.replace(/\n/g, '\\n')}`);
-              } else {
-                this.outputChannel.appendLine(`[executeSvnCommand] 输出内容前1000个字符: ${processedOutput.substring(0, 1000).replace(/\n/g, '\\n')}...`);
+              // 步骤3: 提示用户输入认证信息
+              if (this.authService.getDefaultAuthPrompt()) {
+                const authResult = await SvnAuthDialog.showAuthDialog(repoUrl || path);
+                if (authResult) {
+                  try {
+                    const result = await this._executeCommand(command, path, useXml, authResult.username, authResult.password);
+                    
+                    // 保存认证信息（如果用户选择保存）
+                    if (authResult.saveCredentials && repoUrl && this.authService.getAutoSaveCredentials()) {
+                      await this.authService.saveCredential(repoUrl, authResult.username, authResult.password);
+                      SvnAuthDialog.showAuthSuccessMessage(repoUrl, authResult.username, true);
+                    } else {
+                      SvnAuthDialog.showAuthSuccessMessage(repoUrl || path, authResult.username, false);
+                    }
+                    
+                    return result;
+                  } catch (finalError: any) {
+                    if (this._isAuthenticationError(finalError)) {
+                      SvnAuthDialog.showAuthFailureMessage(repoUrl || path, '用户名或密码错误');
+                    }
+                    throw finalError;
+                  }
+                } else {
+                  throw new Error('用户取消了认证操作');
+                }
               }
-              resolve(processedOutput);
             }
           }
-        );
-        
-        // 处理实时输出
-        if (svnProcess.stdout) {
-          svnProcess.stdout.on('data', (data) => {
-            const processedData = this.processCommandOutput(data.toString());
-            this.outputChannel.appendLine(`[executeSvnCommand] 命令输出: ${processedData.replace(/\n/g, '\\n')}`);
-          });
+          throw error; // 不是认证错误或无法处理，直接抛出原错误
         }
-        
-        if (svnProcess.stderr) {
-          svnProcess.stderr.on('data', (data) => {
-            const processedData = this.processCommandOutput(data.toString());
-            this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${processedData.replace(/\n/g, '\\n')}`);
-          });
-        }
-      });
+      } else {
+        // 如果已经提供了用户名密码，直接使用
+        return await this._executeCommand(command, path, useXml, username, password);
+      }
     } catch (error: any) {
       this.outputChannel.appendLine(`[executeSvnCommand] 捕获到异常: ${error.message}`);
-      if (error.stderr) {
-        const convertedStderr = this.processCommandOutput(error.stderr);
-        this.outputChannel.appendLine(`[executeSvnCommand] 错误输出: ${convertedStderr}`);
-        throw new Error(`SVN错误: ${convertedStderr}`);
-      }
       throw error;
     }
+  }
+
+  /**
+   * 实际执行SVN命令的内部方法
+   */
+  private async _executeCommand(
+    command: string, 
+    path: string, 
+    useXml: boolean = false,
+    username?: string,
+    password?: string
+  ): Promise<string> {
+    // 获取增强的环境变量配置
+    const env = this.getEnhancedEnvironment();
+    
+    this.outputChannel.appendLine(`[_executeCommand] 设置编码环境变量: LANG=${env.LANG}, LC_ALL=${env.LC_ALL}`);
+    
+    // 根据 useXml 参数决定是否添加 --xml 标志
+    let xmlFlag = '';
+    if (useXml) {
+      xmlFlag = '--xml';
+      this.outputChannel.appendLine(`[_executeCommand] 添加XML输出标志: ${xmlFlag}`);
+    }
+    
+    // 对于diff命令，添加特殊处理以支持各种编码
+    if (command.includes('diff')) {
+      if (!command.includes('--force')) {
+        command = `${command} --force`;
+      }
+      // 添加编码相关参数
+      if (!command.includes('--internal-diff')) {
+        command = `${command} --internal-diff`;
+      }
+      this.outputChannel.appendLine(`[_executeCommand] 为diff命令添加编码支持参数`);
+    }
+    
+    // 对于log命令，确保使用UTF-8输出
+    if (command.includes('log')) {
+      if (!command.includes('--xml') && useXml) {
+        // XML输出时已经包含编码信息
+      }
+    }
+    
+    // 构建完整命令，包含认证信息
+    let finalCommand = `svn ${command} ${xmlFlag}`.trim();
+    if (username && password) {
+      finalCommand += ` --username "${username}" --password "${password}" --non-interactive --trust-server-cert`;
+      this.outputChannel.appendLine(`[_executeCommand] 使用认证信息，用户名: ${username}`);
+    }
+    
+    this.outputChannel.appendLine(`[_executeCommand] 最终命令: ${finalCommand.replace(/ --password "[^"]*"/, ' --password "***"')}`);
+    
+    // 执行命令
+    this.outputChannel.appendLine(`[_executeCommand] 开始执行命令...`);
+    return new Promise<string>((resolve, reject) => {
+      const svnProcess = cp.exec(
+        finalCommand, 
+        { 
+          cwd: path, 
+          env,
+          maxBuffer: 50 * 1024 * 1024, // 增加缓冲区大小到50MB
+          encoding: 'utf8' as BufferEncoding  // 显式指定编码
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            this.outputChannel.appendLine(`[_executeCommand] 命令执行失败，错误码: ${error.code}`);
+            if (stderr) {
+              // 尝试编码转换
+              const convertedStderr = this.processCommandOutput(stderr);
+              this.outputChannel.appendLine(`[_executeCommand] 错误输出: ${convertedStderr}`);
+              reject(new Error(`SVN错误: ${convertedStderr}`));
+            } else {
+              this.outputChannel.appendLine(`[_executeCommand] 错误信息: ${error.message}`);
+              reject(error);
+            }
+          } else {
+            // 处理输出编码
+            const processedOutput = this.processCommandOutput(stdout);
+            
+            this.outputChannel.appendLine(`[_executeCommand] 命令执行成功，输出长度: ${processedOutput.length} 字节`);
+            if (processedOutput.length < 1000) {
+              this.outputChannel.appendLine(`[_executeCommand] 输出内容: ${processedOutput.replace(/\n/g, '\\n')}`);
+            } else {
+              this.outputChannel.appendLine(`[_executeCommand] 输出内容前1000个字符: ${processedOutput.substring(0, 1000).replace(/\n/g, '\\n')}...`);
+            }
+            resolve(processedOutput);
+          }
+        }
+      );
+      
+      // 处理实时输出
+      if (svnProcess.stdout) {
+        svnProcess.stdout.on('data', (data) => {
+          const processedData = this.processCommandOutput(data.toString());
+          this.outputChannel.appendLine(`[_executeCommand] 命令输出: ${processedData.replace(/\n/g, '\\n')}`);
+        });
+      }
+      
+      if (svnProcess.stderr) {
+        svnProcess.stderr.on('data', (data) => {
+          const processedData = this.processCommandOutput(data.toString());
+          this.outputChannel.appendLine(`[_executeCommand] 错误输出: ${processedData.replace(/\n/g, '\\n')}`);
+        });
+      }
+    });
+  }
+
+  /**
+   * 检查是否是认证失败错误
+   */
+  private _isAuthenticationError(error: any): boolean {
+    const errorMessage = error.message || error.toString();
+    return errorMessage.includes('E170001') || 
+           errorMessage.includes('Authentication failed') ||
+           errorMessage.includes('authentication failed') ||
+           errorMessage.includes('认证失败') ||
+           errorMessage.includes('用户名或密码') ||
+           errorMessage.includes('Authorization failed');
   }
 
   /**
