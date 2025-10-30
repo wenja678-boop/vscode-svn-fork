@@ -13,24 +13,24 @@
     "Other"
   ],
   "activationEvents": [
-      "onStartupFinished",
-      "onCommand:vscode-svn.uploadFile",
-      "onCommand:vscode-svn.uploadFolder",
-      "onCommand:vscode-svn.commitFile",
-      "onCommand:vscode-svn.revertFile",
-      "onCommand:vscode-svn.revertFolder",
-      "onCommand:vscode-svn.setSvnRoot",
-      "onCommand:vscode-svn.clearSvnRoot",
-      "onCommand:vscode-svn.updateFile",
-      "onCommand:vscode-svn.updateDirectory",
-      "onCommand:vscode-svn.updateWorkspace",
-      "onCommand:vscode-svn.viewLog",
-      "onCommand:vscode-svn.showLocalRevision",
-      "onCommand:vscode-svn.configureFilter",
-      "onCommand:vscode-svn.showFilterInfo",
-      "onCommand:vscode-svn.checkout",
-      "workspaceContains:.svn"
-    ],
+    "onStartupFinished",
+    "onCommand:vscode-svn.uploadFile",
+    "onCommand:vscode-svn.uploadFolder",
+    "onCommand:vscode-svn.commitFile",
+    "onCommand:vscode-svn.revertFile",
+    "onCommand:vscode-svn.revertFolder",
+    "onCommand:vscode-svn.setSvnRoot",
+    "onCommand:vscode-svn.clearSvnRoot",
+    "onCommand:vscode-svn.updateFile",
+    "onCommand:vscode-svn.updateDirectory",
+    "onCommand:vscode-svn.updateWorkspace",
+    "onCommand:vscode-svn.viewLog",
+    "onCommand:vscode-svn.showLocalRevision",
+    "onCommand:vscode-svn.configureFilter",
+    "onCommand:vscode-svn.showFilterInfo",
+    "onCommand:vscode-svn.checkout",
+    "workspaceContains:.svn"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -430,12 +430,14 @@
   "dependencies": {
     "@types/xmldom": "^0.1.34",
     "@xmldom/xmldom": "^0.9.8",
-    "minimatch": "^9.0.3"
+    "minimatch": "^9.0.3",
+    "openai": "^6.7.0",
+    "vsce": "^2.15.0"
   },
   "devDependencies": {
+    "@types/minimatch": "^5.1.2",
     "@types/node": "^16.11.7",
     "@types/vscode": "^1.60.0",
-    "@types/minimatch": "^5.1.2",
     "typescript": "^4.5.5"
   }
 }

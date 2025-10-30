@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import * as https from 'https';
-import * as http from 'http'
+import OpenAI from 'openai';
+
 
 /**
  * AI服务类，用于生成SVN提交日志
@@ -39,7 +39,7 @@ export class AiService {
       '• API访问地址\n' +
       '• 模型ID\n' +
       '• API密钥\n\n' +
-      '支持OpenAI、通义千问、文心一言等多种AI服务',
+      '自用, 仅支持openai compatible',
       { modal: true }, // 设置为模态对话框，更加显眼
       '🚀 立即配置',
       '📖 查看配置说明',
@@ -73,15 +73,20 @@ export class AiService {
     // 配置API地址
     const apiUrl = await vscode.window.showInputBox({
       title: '🔗 第1步：配置API访问地址',
-      prompt: '请输入AI服务的API访问地址（完整的URL）',
-      placeHolder: '例如: https://api.openai.com/v1/chat/completions',
+      prompt: '请输入AI服务的API Base URL (不含 /chat/completions)',
+      // 【重要修复】修改 placeholder 为 Base URL
+      placeHolder: '例如: https://api.openai.com/v1',
       ignoreFocusOut: true,
       validateInput: (value) => {
         if (!value || value.trim() === '') {
-          return 'API地址不能为空';
+          return 'API Base URL 不能为空';
         }
         if (!value.startsWith('http://') && !value.startsWith('https://')) {
           return 'API地址必须以 http:// 或 https:// 开头';
+        }
+        // 【重要修复】验证并禁止完整的终结点路径
+        if (value.endsWith('/chat/completions') || value.endsWith('/completions')) {
+          return '请输入 API 的 Base URL (例如: https://api.openai.com/v1)，而不是完整的 /chat/completions 路径';
         }
         return null;
       }
@@ -171,36 +176,22 @@ export class AiService {
     const configGuide = `
 🤖 AI服务配置指南
 
+(已更新为 Base URL 格式)
+
 支持的AI服务：
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔹 OpenAI GPT
-   • API地址: https://api.openai.com/v1/chat/completions
-   • 模型ID: gpt-3.5-turbo 或 gpt-4
-   • API密钥: sk-...（从OpenAI官网获取）
-
-🔹 通义千问
-   • API地址: https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation
-   • 模型ID: qwen-turbo 或 qwen-plus
-   • API密钥: sk-...（从阿里云控制台获取）
-
-🔹 文心一言
-   • API地址: https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions
-   • 模型ID: ernie-bot 或 ernie-bot-turbo
-   • API密钥: 从百度智能云控制台获取
-
-🔹 本地AI服务（如Ollama）
-   • API地址: http://localhost:11434/v1/chat/completions
-   • 模型ID: llama2 或其他本地模型名称
-   • API密钥: 可以为空或任意字符串
+🔹 OpenAI Compatible
+  • API地址: https://api.openai.com/v1
+  • 模型ID: 自行获取
+  • API密钥: 自行获取
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 💡 配置提示：
-   • 确保API地址格式正确，包含完整的协议和路径
-   • 模型ID必须是服务商支持的模型名称
-   • API密钥需要有相应的访问权限
-   • 本地服务需要确保服务已启动且可访问
+  • API地址必须是 Base URL，不能包含 /chat/completions
+  • 模型ID必须是服务商支持的模型名称
+  • API密钥需要有相应的访问权限
 `;
 
     await vscode.window.showInformationMessage(
@@ -440,12 +431,26 @@ ${truncatedDiff}
    * 调用AI API
    * @param prompt 提示内容
    * @param config AI配置
-   * @returns AI生成的回复
-   */
-  private callAiApi(prompt: string, config: { apiUrl: string; modelId: string; apiKey: string }): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // 构建请求数据 - 使用通用的OpenAI格式
-      const requestData = JSON.stringify({
+ * @returns AI生成的回复
+ */
+  private async callAiApi(prompt: string, config: { apiUrl: string; modelId: string; apiKey: string }): Promise<string> {
+    
+    // 【修改】移除所有 axios, httpConfig, proxy, 和 agent 逻辑
+    // openAI 库会自动处理 VSCode 的代理和 SSL 设置
+
+    try {
+      this.outputChannel.appendLine(`[callAiApi] 准备调用 (使用 'openai' 库): ${config.apiUrl}`);
+      
+      // 【修改】使用 'openai' 库
+      // 它会自动从 VSCode 环境中获取代理和 SSL 设置
+      const client = new OpenAI({
+        apiKey: config.apiKey,
+        baseURL: config.apiUrl, 
+        timeout: 30000, // 增加超时时间
+        // 无需手动设置 httpAgent/httpsAgent，库会自动处理
+      });
+
+      const requestBody: OpenAI.Chat.Completions.ChatCompletionCreateParams = {
         model: config.modelId,
         messages: [
           {
@@ -459,72 +464,46 @@ ${truncatedDiff}
         ],
         temperature: 0.7,
         max_tokens: 2000
-      });
-
-      // 解析URL
-      const url = new URL(config.apiUrl);
-      const options = {
-        hostname: url.hostname,
-        port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: url.pathname + url.search,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${config.apiKey}`,
-          'Content-Length': Buffer.byteLength(requestData)
-        }
       };
 
-      const requestModule = url.protocol === 'https:' ? https : http;
-      const req = requestModule.request(options, (res) => {
-        let data = '';
-        
-        res.on('data', (chunk) => {
-          data += chunk;
-        });
-        
-        res.on('end', () => {
-          try {
-            if (res.statusCode === 200) {
-              const response = JSON.parse(data);
-              
-              // 尝试解析不同格式的响应
-              let content = '';
-              if (response.choices && response.choices[0] && response.choices[0].message) {
-                // OpenAI格式
-                content = response.choices[0].message.content.trim();
-              } else if (response.output && response.output.text) {
-                // 通义千问格式
-                content = response.output.text.trim();
-              } else if (response.result) {
-                // 其他可能的格式
-                content = response.result.trim();
-              } else {
-                throw new Error('无法解析AI响应格式');
-              }
-              
-              this.outputChannel.appendLine(`[callAiApi] AI响应成功，内容长度: ${content.length}`);
-              resolve(content);
-            } else {
-              this.outputChannel.appendLine(`AI API调用失败 - 状态码: ${res.statusCode}`);
-              this.outputChannel.appendLine(`响应数据: ${data}`);
-              reject(new Error(`AI API调用失败: ${res.statusCode} - ${data}`));
-            }
-          } catch (error: any) {
-            this.outputChannel.appendLine(`AI API响应解析失败: ${error.message}`);
-            this.outputChannel.appendLine(`响应数据: ${data}`);
-            reject(new Error(`AI API响应解析失败: ${error.message}`));
+      // 【修改】使用 openai 客户端发起请求
+      const response = await client.chat.completions.create(requestBody);
+
+      // 尝试解析响应
+      let content = '';
+      if (response.choices && response.choices[0] && response.choices[0].message) {
+        content = response.choices[0].message.content?.trim() || '';
+      } else {
+        this.outputChannel.appendLine(`[callAiApi] 无法解析AI响应格式。响应: ${JSON.stringify(response)}`);
+        throw new Error('无法解析AI响应格式');
+      }
+      
+      this.outputChannel.appendLine(`[callAiApi] AI响应成功，内容长度: ${content.length}`);
+      return content;
+
+    } catch (error: any) {
+      this.outputChannel.appendLine(`[callAiApi] AI API调用失败: ${error.message}`);
+      let errorMessage = `AI API调用失败: ${error.message}`;
+
+      // 【修改】使用 'openai' 库的错误处理
+      if (error instanceof OpenAI.APIError) {
+        errorMessage = `AI API调用失败: ${error.status} - ${error.name}: ${error.message}`;
+        this.outputChannel.appendLine(`[callAiApi] 响应状态码: ${error.status}`);
+        this.outputChannel.appendLine(`[callAiApi] 错误类型: ${error.type}`);
+        // error.error 可能包含更详细的服务器错误信息
+        if (error.error) {
+          this.outputChannel.appendLine(`[callAiApi] 错误详情: ${JSON.stringify(error.error)}`);
+          // 尝试提取更具体的错误消息
+          const serverError = (error.error as any)?.error;
+          if (serverError && serverError.message) {
+            errorMessage = `AI API调用失败: ${error.status} - ${serverError.message}`;
           }
-        });
-      });
-
-      req.on('error', (error: any) => {
-        this.outputChannel.appendLine(`AI API网络请求失败: ${error.message}`);
-        reject(new Error(`AI API网络请求失败: ${error.message}`));
-      });
-
-      req.write(requestData);
-      req.end();
-    });
+        }
+      }
+      
+      // 向上抛出错误，以便 generateCommitMessage 中的 try/catch 可以捕获
+      throw new Error(errorMessage);
+    }
   }
-} 
+}
+
